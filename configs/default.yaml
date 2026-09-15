@@ -16,7 +16,6 @@ env:
     supply_depot_minerals: 100
     barracks_minerals: 150
     marine_minerals: 50
-    supply_headroom_threshold: 4
   reward:
     shaping_enabled: false
     shaping_coefficient: 0.01

@@ -16,22 +16,21 @@ def test_no_op_always_legal():
     assert mask[FixedAction.NO_OP]
 
 
-def test_build_supply_depot_needs_minerals_scv_and_headroom_pressure():
+def test_build_supply_depot_needs_minerals_and_an_scv():
     spec = make_spec()
     config = MaskingConfig()
 
-    # Not enough minerals, plenty of headroom.
+    # Not enough minerals.
     state = GameState(game_loop=0, minerals=50, food_used=5, food_cap=15)
     state.scvs.append(fake.scv(1))
     assert not compute_action_masks(state, spec, config)[FixedAction.BUILD_SUPPLY_DEPOT]
 
-    # Enough minerals but plenty of headroom left -- no need yet.
+    # Enough minerals and an SCV, regardless of how much headroom is left --
+    # timing is left to the policy to learn, not hard-masked away (a
+    # threshold-based gate here previously deadlocked the whole economy: at
+    # game start headroom starts above any reasonable "still fine" threshold
+    # and nothing else can lower it without a depot existing first).
     state = GameState(game_loop=0, minerals=200, food_used=5, food_cap=15)
-    state.scvs.append(fake.scv(1))
-    assert not compute_action_masks(state, spec, config)[FixedAction.BUILD_SUPPLY_DEPOT]
-
-    # Enough minerals, an SCV, and headroom is tight.
-    state = GameState(game_loop=0, minerals=200, food_used=13, food_cap=15)
     state.scvs.append(fake.scv(1))
     assert compute_action_masks(state, spec, config)[FixedAction.BUILD_SUPPLY_DEPOT]
 

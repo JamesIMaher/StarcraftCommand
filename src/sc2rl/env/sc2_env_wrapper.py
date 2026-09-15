@@ -96,7 +96,6 @@ class SC2FightEnv(gym.Env):
             supply_depot_minerals=config.masking.supply_depot_minerals,
             barracks_minerals=config.masking.barracks_minerals,
             marine_minerals=config.masking.marine_minerals,
-            supply_headroom_threshold=config.masking.supply_headroom_threshold,
         )
         self._translator = ActionTranslator(self.action_spec)
         self._sc2_env = None

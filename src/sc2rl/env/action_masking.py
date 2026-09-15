@@ -22,19 +22,24 @@ class MaskingConfig:
     supply_depot_minerals: int = 100
     barracks_minerals: int = 150
     marine_minerals: int = 50
-    # Only worth building a new supply depot once headroom drops to/below this.
-    supply_headroom_threshold: int = 4
 
 
 def compute_action_masks(state: GameState, spec: ActionSpaceSpec, config: MaskingConfig) -> np.ndarray:
     mask = np.zeros(spec.num_actions, dtype=bool)
     mask[FixedAction.NO_OP] = True
 
+    # Deliberately NOT gated on supply headroom being "low enough to justify
+    # it" -- an earlier version required headroom <= a threshold, which
+    # deadlocked the whole economy: at game start headroom is already above
+    # any reasonable threshold and nothing else can lower it (marines need a
+    # barracks, a barracks needs a depot), so BUILD_SUPPLY_DEPOT never became
+    # legal. When to build is exactly the kind of timing decision the policy
+    # is meant to learn -- the mask should only rule out what's illegal
+    # (unaffordable, no worker, at the cap), not what's merely unwise yet.
     can_build_depot = (
         state.minerals >= config.supply_depot_minerals
         and len(state.scvs) > 0
         and len(state.supply_depots) < config.max_supply_depots
-        and state.supply_headroom <= config.supply_headroom_threshold
     )
     mask[FixedAction.BUILD_SUPPLY_DEPOT] = can_build_depot
 

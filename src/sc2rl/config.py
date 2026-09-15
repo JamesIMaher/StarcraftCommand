@@ -29,7 +29,6 @@ class MaskConfig:
     supply_depot_minerals: int = 100
     barracks_minerals: int = 150
     marine_minerals: int = 50
-    supply_headroom_threshold: int = 4
 
     @staticmethod
     def from_dict(data: dict) -> "MaskConfig":
