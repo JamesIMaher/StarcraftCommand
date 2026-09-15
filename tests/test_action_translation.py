@@ -124,6 +124,22 @@ def test_move_army_seeks_a_known_enemy_structure_in_the_target_sector():
     assert abs(target_y - 14) <= 1.0
 
 
+def test_move_army_to_home_sector_targets_the_command_center_not_the_corner():
+    # The home sector's geometric center is in the map corner behind the
+    # base, typically off the playable area -- recalling the army there
+    # bunched it at the cliff edge. "Home" means the command center.
+    spec = make_spec()
+    translator = ActionTranslator(spec, rng=random.Random(0))
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.marines.append(fake.marine(1, x=30, y=30))
+    state.command_centers.append(fake.command_center(5, x=13, y=12))
+
+    calls = translator.translate(spec.move_action_for_sector(0), state, identity_orientation(spec))
+    target_x, target_y = calls[0].arguments[2]
+    assert abs(target_x - 13) <= 1.0
+    assert abs(target_y - 12) <= 1.0
+
+
 def test_move_army_ignores_structures_outside_the_target_sector():
     spec = make_spec()
     translator = ActionTranslator(spec, rng=random.Random(0))

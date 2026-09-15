@@ -177,12 +177,37 @@ class SC2FightEnv(gym.Env):
         """The game's own start_raw.playable_area, via SC2Env.game_info --
         see ActionTranslator.playable_area for why attack targets must stay
         inside it. None (full-map fallback) when the underlying env doesn't
-        expose it, e.g. the stubbed env in tests."""
+        expose it, e.g. the stubbed env in tests.
+
+        game_info is in world coordinates, but everything this env works in
+        -- raw_units positions and the "world" argument of raw actions -- is
+        pysc2's raw_resolution frame: world coordinates scaled by
+        raw_resolution / max(map width, height) and with the y axis FLIPPED
+        (pysc2 features.Features.init_camera's _world_to_minimap_px chain:
+        world -> top-left origin -> scale). The playable area must go
+        through that same transform or the clamp lands in the wrong place
+        entirely -- as it did at first: fed in untransformed, it pushed
+        targets toward an edge rather than away from one.
+        """
         game_info = getattr(self._sc2_env, "game_info", None)
         if not game_info:
             return None
-        area = game_info[0].start_raw.playable_area
-        return float(area.p0.x), float(area.p0.y), float(area.p1.x), float(area.p1.y)
+        start_raw = game_info[0].start_raw
+        area, world = start_raw.playable_area, start_raw.map_size
+        scale = self.config.map_size / max(world.x, world.y)
+        raw = (
+            area.p0.x * scale,
+            (world.y - area.p1.y) * scale,  # y flips, so p1.y becomes the minimum
+            area.p1.x * scale,
+            (world.y - area.p0.y) * scale,
+        )
+        if self._translator.playable_area is None:
+            print(
+                f"[env] map world size {world.x}x{world.y}, playable area world "
+                f"({area.p0.x},{area.p0.y})-({area.p1.x},{area.p1.y}) -> raw frame "
+                f"x {raw[0]:.1f}..{raw[2]:.1f}, y {raw[1]:.1f}..{raw[3]:.1f}"
+            )
+        return raw
 
     def _sector_of(self, x: float, y: float) -> int:
         cx, cy = self._orientation.to_canonical(x, y)

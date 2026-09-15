@@ -110,14 +110,25 @@ still only needs the lower `min_marines_to_move` bar.
 jitter so they don't all path to the identical point). If the sector holds
 a *known enemy structure* (visible, or a fog snapshot of one seen earlier),
 the target is the structure itself -- the one nearest the army -- so "go to
-the sector with the building" resolves to "go to the building." Otherwise
-it's the sector's center, which at 6x6 already sees the whole cell. Every
-target is clamped strictly inside the game's own `playable_area` (read from
+the sector with the building" resolves to "go to the building." A move to
+the home sector targets the command center (the home sector's geometric
+center is the map corner behind the base). Otherwise it's the sector's
+center, which at 6x6 already sees the whole cell. Every target is clamped
+strictly inside the game's own `playable_area` (read from
 `SC2Env.game_info` at reset), because the playable area is inset from the
 nominal 64x64 square: an earlier version biased edge-sector targets all the
 way to the literal map corner to reach corner buildings on the old 4x4
 grid, and since that point is unpathable the attack-move never completed
 -- the whole army would park at the corner cliff for the rest of the game.
+
+One coordinate-frame subtlety worth knowing: `raw_units` positions and the
+`world` argument of raw actions are *not* world coordinates. PySC2 scales
+them by `raw_resolution / max(map width, height)` and flips the y axis
+(`features.Features.init_camera`), and applies the inverse to raw actions,
+so observations and actions agree with each other -- but `game_info`
+(map size, playable area) is in real world coordinates and must be pushed
+through the same transform before it can be compared to anything else.
+The env prints both frames once at reset (`[env] map world size ...`).
 
 **Neural network.** `MaskablePPO`'s default `MlpPolicy`
 (`sb3_contrib.common.maskable.policies.MaskableActorCriticPolicy`) is two

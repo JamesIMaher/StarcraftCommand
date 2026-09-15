@@ -27,6 +27,8 @@ _BUILD_OFFSET_RANGE = 6.0
 # to meaningfully separate the group on its own.
 _MOVE_VARIANCE = 0.75
 
+_HOME_SECTOR = 0  # canonical sector nearest home after SpawnOrientation mirroring
+
 
 # Keep clamped targets this far inside the playable-area boundary rather than
 # exactly on it, so the point is somewhere a unit can actually stand.
@@ -102,6 +104,12 @@ class ActionTranslator:
         if not state.marines:
             return [sc2_actions.RAW_FUNCTIONS.no_op()]
         target = self._known_structure_target(state, sector, orientation)
+        if target is None and sector == _HOME_SECTOR and state.command_center_pos is not None:
+            # "Recall/defend home" means the base, not the home sector's
+            # geometric center -- which sits in the map corner behind the
+            # base, typically off the playable area, so the whole army would
+            # bunch up at the cliff edge there instead of at the base.
+            target = state.command_center_pos
         if target is None:
             # sector_center() is in canonical (home-relative) space; convert
             # back to real map coordinates for the actual attack-move order.
