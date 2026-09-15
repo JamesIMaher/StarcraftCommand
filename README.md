@@ -139,7 +139,15 @@ and per-sector unit presence -- rather than invented heuristics:
   with the discount in place, from economic value alone before it had a cap.
 - **Home-defense penalty** (Economy of Force / Security): a per-step
   penalty while the home sector has enemy units present and no marines
-  there to respond.
+  there to respond, capped per episode at `home_defense_penalty_cap`
+  (default `1.0`). Episodes have no step limit (only PySC2's own game-end
+  conditions), so an uncapped version of this could accumulate for
+  hundreds or thousands of steps in an unusually long episode -- confirmed
+  live: an early, untrained episode's `ep_rew_mean` reached **-46.4** after
+  only 18,000 timesteps, far beyond anything the terminal_reward_scale
+  analysis below accounted for, because that analysis only ever reasoned
+  about a single-step transition, never an episode-length accumulation of
+  an uncapped per-step penalty.
 - **Scouting bonus** (OODA loop -- Observe): a one-time reward the first
   time an enemy unit is seen in a given sector during an episode, rewarding
   exploration itself rather than only its downstream combat consequences.
@@ -163,21 +171,33 @@ and per-sector unit presence -- rather than invented heuristics:
   hasn't been in before -- applied only once movement is actually legal, so
   the early economy-building phase (correctly sitting at home) is never
   penalized. Observed live as a large, fully-mobilized army parking in one
-  sector indefinitely -- "a huge pile of marines in one location."
+  sector indefinitely -- "a huge pile of marines in one location." Also
+  capped per episode (`stale_search_penalty_cap`, default `0.5`), same
+  unbounded-episode-length reasoning as the home-defense penalty above.
 
 Even with every component capped, their *sum* can still reach a few points
 of reward regardless of outcome -- capping bounds each channel, but only the
-terminal term actually guarantees winning beats losing. So
-`reward.terminal_reward_scale` (default `10.0`) is deliberately set well
-above 1: with the current caps, worst-case shaping per episode is roughly
-`shaping_coefficient * (economic_value_cap + kill_value_scale *
-kill_value_cap) + (scouting_bonus + exploration_bonus) * num_sectors` ~=
-5.6, and 10x (+-10) comfortably dominates that with margin -- any win
-outscores any loss no matter how much shaping a losing episode racks up.
-This is tested directly
-(`test_default_config_guarantees_any_win_outscores_a_heavily_shaped_loss`)
-against the actual shipped defaults, specifically to catch this class of
-imbalance if the caps/scale are ever retuned again.
+terminal term actually guarantees a win's total stays positive and a loss's
+stays negative. So `reward.terminal_reward_scale` (default `10.0`) is
+deliberately set well above 1: with the current caps, worst-case POSITIVE
+shaping per episode is roughly `shaping_coefficient * (economic_value_cap +
+kill_value_scale * kill_value_cap) + (scouting_bonus + exploration_bonus) *
+num_sectors` ~= 5.6, and worst-case NEGATIVE shaping is roughly
+`-(shaping_coefficient * economic_value_cap + home_defense_penalty_cap +
+stale_search_penalty_cap)` ~= -5.5 (economic value has no further downside
+once it's dropped to zero; killed value never decreases, so it has no
+negative side at all). 10x here (+-10) comfortably dominates both
+directions with margin, regardless of how long an episode runs or how much
+shaping it racks up either way. This is tested directly against the actual
+shipped defaults
+(`test_default_config_guarantees_any_win_outscores_a_heavily_shaped_loss`,
+plus `test_win_reward_stays_positive_despite_a_long_troubled_episode` for
+the specific failure mode of an unbounded-length episode -- the earlier,
+single-step version of this test could not have caught `ep_rew_mean`
+reaching -46.4 in one long early episode, since home_defense_penalty and
+stale_search_penalty are both per-step terms that only overrun their
+intended bound across many steps, not within a single one), specifically to
+catch this class of imbalance if the caps/scale are ever retuned again.
 
 Shaping applies on every step, **including the terminal one** -- a loss
 typically means the base/army gets wiped out right at the end, so computing
@@ -429,10 +449,12 @@ All under `env:` in `configs/default.yaml`:
 | `reward.kill_value_scale` | `0.1` | Additional discount on kill-value credit, on top of concentration scaling |
 | `reward.kill_value_cap` | `2000.0` | Ceiling on kill value used for the reward -- kills alone can't grind out unbounded reward |
 | `reward.home_defense_penalty` | `0.05` | Per-step penalty while home is undefended and under attack |
+| `reward.home_defense_penalty_cap` | `1.0` | Ceiling on total home_defense_penalty accumulated within one episode |
 | `reward.scouting_bonus` | `0.02` | One-time reward per newly-sighted enemy sector per episode |
 | `reward.exploration_bonus` | `0.02` | One-time reward per sector a marine newly enters per episode -- counterweight to home_defense_penalty |
 | `reward.stale_search_penalty` | `0.01` | Per-step penalty once the army stalls without reaching a new sector too long |
 | `reward.stale_search_patience` | `30` | Steps of no new-sector progress tolerated before stale_search_penalty kicks in |
+| `reward.stale_search_penalty_cap` | `0.5` | Ceiling on total stale_search_penalty accumulated within one episode |
 | `reward.terminal_reward_scale` | `10.0` | Multiplies PySC2's own terminal win/loss reward -- deliberately dominant, see "How it works" |
 
 `SC2FightEnv.step()` also returns each component separately in its `info`

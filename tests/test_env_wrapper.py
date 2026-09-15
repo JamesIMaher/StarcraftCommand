@@ -1,6 +1,7 @@
 """Exercises SC2FightEnv's step()/reset() contract against a stubbed SC2Env
 (no live StarCraft II client involved) via the env_factory injection seam."""
 
+import pytest
 from pysc2.lib import actions as sc2_actions
 
 from sc2rl.config import EnvConfig
@@ -315,6 +316,34 @@ def test_home_defense_penalty_not_applied_when_defenders_present():
     assert reward == 0.0
 
 
+def test_home_defense_penalty_capped_per_episode():
+    # Regression test: episodes have no step limit (only PySC2's own
+    # game-end conditions), so this per-step penalty accumulating unbounded
+    # across a long episode was the actual root cause of ep_rew_mean
+    # reaching -46.4 after only 18,000 timesteps in a single early,
+    # untrained episode -- far beyond what the terminal_reward_scale
+    # analysis accounted for, since that analysis only ever reasoned about a
+    # single-step transition.
+    undefended_home = fake.make_timestep(
+        units=[fake.enemy_unit(1, fake.UNIT_MARINE, x=1, y=1)], minerals=0, food_cap=15,
+    )
+    timesteps = [fake.make_timestep(minerals=0, food_cap=15)] + [undefended_home] * 30
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.home_defense_penalty = 0.05
+    config.reward.home_defense_penalty_cap = 0.15  # exactly 3 firings of 0.05, no fractional remainder
+    config.reward.scouting_bonus = 0.0
+    env, _ = make_env(timesteps, config)
+    env.reset()
+
+    total = 0.0
+    for _ in range(30):
+        _, reward, _, _, _ = env.step(FixedAction.NO_OP)
+        total += reward
+    # Without a cap this would be -1.5 (30 steps * -0.05); capped at -0.15.
+    assert total == pytest.approx(-0.15)
+
+
 def test_scouting_bonus_awarded_once_per_newly_seen_enemy_sector():
     ts0 = fake.make_timestep(minerals=0, food_cap=15)  # no enemies visible yet
     ts1 = fake.make_timestep(units=[fake.enemy_unit(1, fake.UNIT_MARINE, x=56, y=56)], minerals=0, food_cap=15)
@@ -429,6 +458,28 @@ def test_stale_search_penalty_resets_on_reaching_a_new_sector():
     assert r2 == 0.0
 
 
+def test_stale_search_penalty_capped_per_episode():
+    # Same unbounded-episode-length problem as home_defense_penalty -- see
+    # test_home_defense_penalty_capped_per_episode.
+    marines = [fake.marine(1, x=1, y=1)]  # never leaves the home sector
+    timesteps = [fake.make_timestep(units=marines, minerals=0, food_cap=15) for _ in range(30)]
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.stale_search_penalty = 0.01
+    config.reward.stale_search_patience = 0
+    config.reward.stale_search_penalty_cap = 0.03  # exactly 3 firings of 0.01
+    config.masking.min_marines_to_move = 1
+    env, _ = make_env(timesteps, config)
+    env.reset()
+
+    total = 0.0
+    for _ in range(10):
+        _, reward, _, _, _ = env.step(FixedAction.NO_OP)
+        total += reward
+    # Without a cap this would be -0.10 (10 steps * -0.01); capped at -0.03.
+    assert total == pytest.approx(-0.03)
+
+
 def test_step_info_exposes_per_component_reward_breakdown():
     # So an imbalance between components (e.g. kill-value outweighing a
     # loss) is directly inspectable instead of needing to be reasoned about
@@ -483,3 +534,40 @@ def test_default_config_guarantees_any_win_outscores_a_heavily_shaped_loss():
     _, win_reward, _, _, _ = win_env.step(FixedAction.NO_OP)
 
     assert win_reward > loss_reward
+
+
+def test_win_reward_stays_positive_despite_a_long_troubled_episode():
+    # Regression test for the actual reported bug: episodes have no step
+    # limit, so home_defense_penalty and stale_search_penalty (both flat
+    # per-step terms) could accumulate for however long an early, untrained
+    # episode dragged on before they were capped -- confirmed live as
+    # ep_rew_mean reaching -46.4 after only 18,000 timesteps in a single
+    # episode. The earlier win/loss invariant test above only ever exercised
+    # a single step() call, so it could never have caught this. Uses the
+    # actual default config (no overrides) and a long run of steps that are
+    # each individually adverse (home undefended, army stalled in the same
+    # sector, economy having just collapsed) to confirm a win's total
+    # reward stays positive regardless of episode length.
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+
+    marines = [fake.marine(i, x=56, y=56) for i in range(20)]  # mobilized, parked away from home
+    enemy_at_home = [fake.enemy_unit(1, fake.UNIT_MARINE, x=1, y=1)]
+    reset_step = fake.make_timestep(
+        units=marines, minerals=0, food_cap=15, total_value_units=config.reward.economic_value_cap,
+    )
+    bad_step = fake.make_timestep(units=marines + enemy_at_home, minerals=0, food_cap=15, total_value_units=0)
+    win_step = fake.make_timestep(
+        units=marines, minerals=0, food_cap=15, reward=1.0, step_type="LAST", total_value_units=0,
+    )
+    timesteps = [reset_step] + [bad_step] * 100 + [win_step]
+    env, _ = make_env(timesteps, config)
+    env.reset()
+
+    total = 0.0
+    terminated = False
+    for _ in range(101):
+        _, reward, terminated, _, _ = env.step(FixedAction.NO_OP)
+        total += reward
+    assert terminated
+    assert total > 0.0

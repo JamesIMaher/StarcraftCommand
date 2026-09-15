@@ -110,6 +110,8 @@ class SC2FightEnv(gym.Env):
         self._seen_enemy_sectors: set[int] = set()
         self._visited_sectors: set[int] = set()
         self._steps_since_new_sector = 0
+        self._home_defense_total = 0.0
+        self._stale_search_total = 0.0
         self._last_reward_breakdown: dict[str, float] = {}
         self._orientation = SpawnOrientation(map_size=config.map_size, mirror_x=False, mirror_y=False)
 
@@ -149,6 +151,8 @@ class SC2FightEnv(gym.Env):
         # _exploration_bonus() runs.
         self._visited_sectors = {_HOME_SECTOR}
         self._steps_since_new_sector = 0
+        self._home_defense_total = 0.0
+        self._stale_search_total = 0.0
         obs = featurize(self._state, self.grid, self.config.max_game_loop_norm, self._orientation)
         return obs, {}
 
@@ -302,12 +306,28 @@ class SC2FightEnv(gym.Env):
     def _home_defense_penalty(self) -> float:
         """Economy of Force / Security: per-step penalty while the home
         sector has enemy units present and no friendly marines there to
-        respond."""
+        respond. Capped per episode (home_defense_penalty_cap) -- episodes
+        have no step limit (only PySC2's own game-end conditions), so an
+        uncapped per-step penalty can accumulate for hundreds or thousands
+        of steps in an unusually long episode, dwarfing terminal_reward_scale
+        despite the caps already in place on the positive-side terms.
+        Confirmed live: an early, untrained episode's ep_rew_mean reached
+        -46.4 after only 18,000 timesteps -- far below anything the "any win
+        beats any loss" analysis accounted for, because that analysis only
+        ever reasoned about a single-step transition, never an
+        episode-length accumulation of an uncapped per-step penalty."""
+        cfg = self.config.reward
         enemy_at_home = any(self._sector_of(u.x, u.y) == _HOME_SECTOR for u in self._state.enemies)
         if not enemy_at_home:
             return 0.0
         friendly_at_home = any(self._sector_of(u.x, u.y) == _HOME_SECTOR for u in self._state.marines)
-        return 0.0 if friendly_at_home else -self.config.reward.home_defense_penalty
+        if friendly_at_home:
+            return 0.0
+        if self._home_defense_total >= cfg.home_defense_penalty_cap:
+            return 0.0
+        penalty = min(cfg.home_defense_penalty, cfg.home_defense_penalty_cap - self._home_defense_total)
+        self._home_defense_total += penalty
+        return -penalty
 
     def _scouting_bonus(self) -> float:
         """OODA loop (Observe): one-time reward the first time an enemy unit
@@ -335,7 +355,9 @@ class SC2FightEnv(gym.Env):
         """See RewardConfig.stale_search_penalty -- a flat per-step penalty
         once the army has gone too long without entering a new sector,
         counteracting the fact that exploration_bonus/scouting_bonus are
-        both one-time and so eventually stop pulling the army onward."""
+        both one-time and so eventually stop pulling the army onward.
+        Capped per episode (stale_search_penalty_cap) for the same reason
+        home_defense_penalty is -- see that method's docstring."""
         cfg = self.config.reward
         if made_progress:
             self._steps_since_new_sector = 0
@@ -345,7 +367,11 @@ class SC2FightEnv(gym.Env):
             return 0.0  # not yet allowed to move at all -- holding position is correct
         if self._steps_since_new_sector <= cfg.stale_search_patience:
             return 0.0
-        return -cfg.stale_search_penalty
+        if self._stale_search_total >= cfg.stale_search_penalty_cap:
+            return 0.0
+        penalty = min(cfg.stale_search_penalty, cfg.stale_search_penalty_cap - self._stale_search_total)
+        self._stale_search_total += penalty
+        return -penalty
 
     def close(self):
         if self._sc2_env is not None:

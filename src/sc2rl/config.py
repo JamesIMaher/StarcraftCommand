@@ -104,6 +104,16 @@ class RewardConfig:
     # Economy of Force / Security: per-step penalty while the home sector has
     # enemy units present and no friendly marines there to respond.
     home_defense_penalty: float = 0.05
+    # Episodes have no step limit (only PySC2's own game-end conditions), so
+    # an uncapped per-step penalty can accumulate for hundreds or thousands
+    # of steps in an unusually long episode -- confirmed live: an early,
+    # untrained episode's ep_rew_mean reached -46.4 after only 18,000
+    # timesteps, far below anything the "any win beats any loss" analysis on
+    # terminal_reward_scale accounted for, because that analysis only ever
+    # reasoned about a single-step transition, never an episode-length
+    # accumulation of an uncapped per-step penalty. Total home_defense
+    # penalty within a single episode is clamped to this.
+    home_defense_penalty_cap: float = 1.0
     # OODA loop (Observe): one-time reward the first time an enemy unit is
     # ever seen in a given sector during an episode -- rewards scouting
     # itself, separate from combat outcomes.
@@ -134,6 +144,9 @@ class RewardConfig:
     # economy-building phase is never penalized.
     stale_search_penalty: float = 0.01
     stale_search_patience: int = 30
+    # Same unbounded-episode-length reasoning as home_defense_penalty_cap --
+    # total stale_search penalty within a single episode is clamped to this.
+    stale_search_penalty_cap: float = 0.5
     # Multiplies PySC2's own terminal win/loss reward (+-1). Set well above
     # 1.0 deliberately: even with economic_value_cap and kill_value_cap in
     # place, a fully-built economy plus a long fight can still sum to a few
@@ -141,12 +154,18 @@ class RewardConfig:
     # losing episode's ep_rew_mean stayed above +2. Capping individual
     # components bounds each one, but doesn't guarantee winning always beats
     # losing on its own; only the terminal term does that reliably. With the
-    # current caps, worst-case shaping per episode is roughly
+    # current caps, worst-case POSITIVE shaping per episode is roughly
     # shaping_coefficient * (economic_value_cap + kill_value_scale *
     # kill_value_cap) + (scouting_bonus + exploration_bonus) * num_sectors
-    # =~ 0.001 * (4000 + 0.1 * 2000) + 0.04 * 36 =~ 5.6 -- 10x here (+-10)
-    # comfortably dominates that with margin, so any win outscores any loss
-    # regardless of shaping.
+    # =~ 0.001 * (4000 + 0.1 * 2000) + 0.04 * 36 =~ 5.6, and worst-case
+    # NEGATIVE shaping is roughly -(shaping_coefficient * economic_value_cap
+    # + home_defense_penalty_cap + stale_search_penalty_cap) =~ -(4.0 + 1.0 +
+    # 0.5) = -5.5 (economic_value_cap covers the worst case of the delta
+    # collapsing from the cap to zero; kill_value never decreases so it has
+    # no negative side). 10x here (+-10) comfortably dominates both
+    # directions with margin, so a win's total reward is always positive and
+    # a loss's is always negative, regardless of how much shaping either
+    # episode racked up.
     terminal_reward_scale: float = 10.0
 
     @staticmethod
