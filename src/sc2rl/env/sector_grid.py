@@ -38,6 +38,31 @@ class SectorGrid:
         y = (row + 0.5) * self.cell_height
         return x, y
 
+    def sector_attack_target(self, sector: int) -> tuple[float, float]:
+        """Like sector_center(), but the outermost ring of sectors is biased
+        all the way to the true map edge instead of stopping at the cell's
+        geometric center. An attack-move order needs to actually reach a
+        building tucked into a corner/edge -- on a 64-map/4x4 grid the outer
+        sector's center sits ~11 units short of the true corner, well beyond
+        a marine's weapon (~5) or even sight (~9) range, so attacks would
+        arrive and stop short with nothing to engage. Interior sectors are
+        unaffected -- their center is already reachable and correct.
+        """
+        col, row = self.sector_coords(sector)
+        if col == 0:
+            x = 0.0
+        elif col == self.cols - 1:
+            x = float(self.map_size)
+        else:
+            x = (col + 0.5) * self.cell_width
+        if row == 0:
+            y = 0.0
+        elif row == self.rows - 1:
+            y = float(self.map_size)
+        else:
+            y = (row + 0.5) * self.cell_height
+        return x, y
+
     def sector_of(self, x: float, y: float) -> int:
         col = min(max(int(x // self.cell_width), 0), self.cols - 1)
         row = min(max(int(y // self.cell_height), 0), self.rows - 1)

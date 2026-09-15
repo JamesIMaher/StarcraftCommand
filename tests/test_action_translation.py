@@ -87,6 +87,23 @@ def test_train_marine_ignores_incomplete_barracks():
     assert calls[0].function == sc2_actions.RAW_FUNCTIONS.no_op.id
 
 
+def test_move_army_to_corner_sector_reaches_the_true_map_edge():
+    # Direct regression test for the reported bug: marines attacking the
+    # farthest (corner) sector must actually reach the true map boundary,
+    # not stop ~11 units short at the old cell-center target, or a building
+    # tucked into the corner is never engaged.
+    spec = make_spec()
+    translator = ActionTranslator(spec, rng=random.Random(0))
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.marines.append(fake.marine(1, x=0, y=0))
+
+    last_sector = spec.grid.num_sectors - 1
+    calls = translator.translate(spec.move_action_for_sector(last_sector), state, identity_orientation(spec))
+    target_x, target_y = calls[0].arguments[2]
+    assert target_x >= 60  # within a marine's weapon range of the true (64, 64) corner
+    assert target_y >= 60
+
+
 def test_move_army_issues_attack_pt_for_every_marine():
     spec = make_spec()
     translator = ActionTranslator(spec, rng=random.Random(0))
@@ -116,12 +133,13 @@ def test_move_army_targets_are_un_mirrored_back_to_world_coordinates():
     state.marines.append(fake.marine(1, x=0, y=0))
     mirrored = SpawnOrientation(map_size=spec.grid.map_size, mirror_x=True, mirror_y=True)
 
-    # Sector 0's canonical center is (8, 8) on a 64-map/4x4 grid; mirrored,
-    # the real-world target should be near (64-8, 64-8) = (56, 56).
+    # Sector 0's canonical attack target is the true edge (0, 0) on a
+    # 64-map/4x4 grid; mirrored, the real-world target should be near
+    # (64, 64), clamped to the map boundary.
     calls = translator.translate(spec.move_action_for_sector(0), state, mirrored)
     target_x, target_y = calls[0].arguments[2]
-    assert 50 <= target_x <= 62
-    assert 50 <= target_y <= 62
+    assert 60 <= target_x <= 64
+    assert 60 <= target_y <= 64
 
 
 def test_move_army_no_op_with_no_marines():

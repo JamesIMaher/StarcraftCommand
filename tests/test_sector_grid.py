@@ -38,6 +38,38 @@ def test_sector_of_clamps_out_of_bounds():
     assert grid.sector_of(999, 999) == grid.sector_of(63, 63)
 
 
+def test_sector_attack_target_reaches_true_corner():
+    # Regression test: sector_center() stops at the cell's geometric center,
+    # ~11 units short of the true corner on a 64-map/4x4 grid -- well beyond
+    # marine weapon/sight range, so an attack order using it can arrive and
+    # stop short of a building tucked into the corner. sector_attack_target()
+    # must reach the actual boundary instead.
+    grid = make_grid()
+    top_left = grid.sector_attack_target(0)
+    assert top_left == (0.0, 0.0)
+
+    last_sector = grid.num_sectors - 1
+    bottom_right = grid.sector_attack_target(last_sector)
+    assert bottom_right == (64.0, 64.0)
+
+
+def test_sector_attack_target_only_biases_the_edge_axis():
+    # A sector on the top edge but not a side edge (e.g. col=1, row=0) should
+    # only be pushed to the true edge on the row axis; the column axis keeps
+    # its normal center, matching sector_center().
+    grid = make_grid()
+    edge_sector = grid.sector_index(col=1, row=0)
+    x, y = grid.sector_attack_target(edge_sector)
+    assert x == 24.0  # unchanged interior-column center
+    assert y == 0.0   # biased to the true top edge
+
+
+def test_sector_attack_target_matches_center_for_interior_sectors():
+    grid = make_grid()
+    interior_sector = grid.sector_index(col=1, row=1)
+    assert grid.sector_attack_target(interior_sector) == grid.sector_center(interior_sector)
+
+
 def test_friendly_quadrant_top_left():
     grid = make_grid()
     min_x, max_x, min_y, max_y = grid.friendly_quadrant(10, 10)

@@ -79,16 +79,25 @@ class ActionTranslator:
     def _move_army(self, state: GameState, sector: int, orientation: SpawnOrientation) -> list:
         if not state.marines:
             return [sc2_actions.RAW_FUNCTIONS.no_op()]
-        # sector_center() is in canonical (home-relative) space; convert back
-        # to real map coordinates for the actual attack-move order.
-        cx, cy = self.spec.grid.sector_center(sector)
+        # sector_attack_target() is in canonical (home-relative) space;
+        # convert back to real map coordinates for the actual attack-move
+        # order. Edge/corner sectors are biased to the true map boundary
+        # (not just the cell center) so an attack order can actually reach a
+        # building tucked into a corner -- see sector_attack_target()'s
+        # docstring.
+        cx, cy = self.spec.grid.sector_attack_target(sector)
         wx, wy = orientation.to_world(cx, cy)
+        map_size = self.spec.grid.map_size
         calls = []
         for marine in state.marines:
-            tx = wx + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE)
-            ty = wy + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE)
+            tx = self._clamp(wx + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE), map_size)
+            ty = self._clamp(wy + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE), map_size)
             calls.append(sc2_actions.RAW_FUNCTIONS.Attack_pt("now", marine.tag, (tx, ty)))
         return calls
+
+    @staticmethod
+    def _clamp(value: float, map_size: int) -> float:
+        return max(0.0, min(float(map_size), value))
 
     def _offset_point(self, x: float, y: float) -> tuple[float, float]:
         dx = self._rng.uniform(-_BUILD_OFFSET_RANGE, _BUILD_OFFSET_RANGE)
