@@ -37,7 +37,7 @@ from .action_space import ActionSpaceSpec, FixedAction
 from .action_translation import ActionTranslator
 from .game_state import GameState
 from .observation import featurize, observation_length
-from .sector_grid import SectorGrid
+from .sector_grid import SectorGrid, SpawnOrientation
 
 _RACE_MAP = {
     "terran": sc2_env.Race.terran,
@@ -102,6 +102,7 @@ class SC2FightEnv(gym.Env):
         self._state: GameState | None = None
         self._cooldowns = np.zeros(self.action_spec.num_actions, dtype=np.int32)
         self._prev_combat_score = 0
+        self._orientation = SpawnOrientation(map_size=config.map_size, mirror_x=False, mirror_y=False)
 
         self.action_space = spaces.Discrete(self.action_spec.num_actions)
         obs_len = observation_length(self.grid)
@@ -118,8 +119,17 @@ class SC2FightEnv(gym.Env):
         self._cooldowns[:] = 0
         self._state = GameState.from_observation(timesteps[0])
         self._prev_combat_score = self._state.combat_score
-        obs = featurize(self._state, self.grid, self.config.max_game_loop_norm)
+        self._orientation = self._compute_orientation(self._state)
+        obs = featurize(self._state, self.grid, self.config.max_game_loop_norm, self._orientation)
         return obs, {}
+
+    def _compute_orientation(self, state: GameState) -> SpawnOrientation:
+        home = state.command_center_pos
+        if home is None:
+            # Shouldn't happen at reset (you always start with a command
+            # center), but fall back to an identity mapping rather than crash.
+            return SpawnOrientation(map_size=self.config.map_size, mirror_x=False, mirror_y=False)
+        return SpawnOrientation.from_home_position(self.config.map_size, *home)
 
     def step(self, action: int):
         if self._state is None:
@@ -129,14 +139,14 @@ class SC2FightEnv(gym.Env):
         if not legal[action]:
             action = int(FixedAction.NO_OP)
 
-        calls = self._translator.translate(action, self._state)
+        calls = self._translator.translate(action, self._state, self._orientation)
         timesteps = self._sc2_env.step([calls])
         ts = timesteps[0]
 
         self._state = GameState.from_observation(ts)
         self._tick_cooldowns(action)
 
-        obs = featurize(self._state, self.grid, self.config.max_game_loop_norm)
+        obs = featurize(self._state, self.grid, self.config.max_game_loop_norm, self._orientation)
         reward = self._compute_reward(ts)
         terminated = bool(ts.last())
         truncated = False

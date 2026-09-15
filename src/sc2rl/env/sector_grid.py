@@ -59,3 +59,38 @@ class SectorGrid:
         else:
             min_y, max_y = half, float(self.map_size)
         return min_x, max_x, min_y, max_y
+
+
+@dataclass(frozen=True)
+class SpawnOrientation:
+    """Maps real map coordinates to a canonical frame where the player's own
+    starting position always falls near (0, 0) -- so sector 0 always means
+    "near home" and the farthest sector always means "toward the enemy",
+    regardless of which corner the player actually spawned in that episode.
+
+    Maps like Simple64 randomize which corner each side spawns in between
+    episodes (confirmed empirically: resets in the same process landed the
+    command center in different quadrants across episodes). Without this,
+    the same sector index means opposite things in different episodes, so a
+    policy can never learn a stable "explore toward the enemy" or "return
+    home to defend" action -- this canonicalization is what makes that
+    learnable at all.
+    """
+
+    map_size: int
+    mirror_x: bool
+    mirror_y: bool
+
+    @staticmethod
+    def from_home_position(map_size: int, home_x: float, home_y: float) -> "SpawnOrientation":
+        half = map_size / 2
+        return SpawnOrientation(map_size=map_size, mirror_x=home_x > half, mirror_y=home_y > half)
+
+    def to_canonical(self, x: float, y: float) -> tuple[float, float]:
+        cx = (self.map_size - x) if self.mirror_x else x
+        cy = (self.map_size - y) if self.mirror_y else y
+        return cx, cy
+
+    def to_world(self, x: float, y: float) -> tuple[float, float]:
+        # Mirroring is its own inverse.
+        return self.to_canonical(x, y)

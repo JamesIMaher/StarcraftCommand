@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 from .game_state import GameState
-from .sector_grid import SectorGrid
+from .sector_grid import SectorGrid, SpawnOrientation
 
 _MINERALS_NORM = 1000.0
 _SUPPLY_CAP_NORM = 200.0
@@ -24,7 +24,9 @@ _ENEMY_COUNT_NORM = 50.0
 _SECTOR_COUNT_NORM = 10.0
 
 
-def featurize(state: GameState, grid: SectorGrid, max_game_loop: int) -> np.ndarray:
+def featurize(
+    state: GameState, grid: SectorGrid, max_game_loop: int, orientation: SpawnOrientation
+) -> np.ndarray:
     features: list[float] = []
 
     features.append(min(state.minerals / _MINERALS_NORM, 1.0))
@@ -70,12 +72,14 @@ def featurize(state: GameState, grid: SectorGrid, max_game_loop: int) -> np.ndar
     sector_enemy_health = [0.0] * grid.num_sectors
 
     for unit in state.marines:
-        s = grid.sector_of(unit.x, unit.y)
+        cx, cy = orientation.to_canonical(unit.x, unit.y)
+        s = grid.sector_of(cx, cy)
         sector_friendly_count[s] += 1
         sector_friendly_health[s] += unit.health_fraction
 
     for unit in state.enemies:
-        s = grid.sector_of(unit.x, unit.y)
+        cx, cy = orientation.to_canonical(unit.x, unit.y)
+        s = grid.sector_of(cx, cy)
         sector_enemy_count[s] += 1
         sector_enemy_health[s] += unit.health_fraction
 
@@ -90,6 +94,8 @@ def featurize(state: GameState, grid: SectorGrid, max_game_loop: int) -> np.ndar
 
 def observation_length(grid: SectorGrid) -> int:
     """Computed rather than hardcoded, so it can never drift out of sync with
-    featurize() as fields are added."""
+    featurize() as fields are added. Orientation only affects values, never
+    the vector length, so an identity orientation is fine here."""
     empty_state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=1)
-    return len(featurize(empty_state, grid, max_game_loop=1))
+    identity = SpawnOrientation(map_size=grid.map_size, mirror_x=False, mirror_y=False)
+    return len(featurize(empty_state, grid, max_game_loop=1, orientation=identity))

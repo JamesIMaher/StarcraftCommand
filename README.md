@@ -43,6 +43,19 @@ grid sector (friendly/enemy count and average health in that sector) for a
 4x4 grid -- 83 floats total at the default grid size. This is a
 `gymnasium.spaces.Box(0.0, 1.0, shape=(83,))`.
 
+**Home-relative sectors.** Maps like `Simple64` randomize which corner each
+side spawns in between episodes (confirmed empirically: resets within the
+same process landed the command center in different quadrants across
+consecutive games). Both the observation's per-sector features and the
+`move_army_to_sector_i` actions are computed in a *canonical, home-relative*
+coordinate frame (`sector_grid.SpawnOrientation`, mirrored once per episode
+from the starting command center position) rather than raw map coordinates
+-- so "sector 0" always means "near home" and the farthest sector always
+means "toward the enemy", in every episode, regardless of which corner you
+actually spawned in. Without this, the same action index meant opposite
+things in different games and the policy could never learn a stable
+explore-toward-the-enemy or return-to-defend behavior.
+
 **Action space.** A flat `Discrete(20)`: `no_op`, `build_supply_depot`,
 `build_barracks`, `train_marine`, plus one `move_army_to_sector_i` per grid
 cell (16 at the default 4x4 grid). `action_masking.py` computes which of
@@ -191,9 +204,12 @@ schema on assumption rather than the live one) -- see the git log for
 specifics: PySC2 needing `absl` flags parsed before use, `raw_units` having
 no `health_max` field (only `health` + `health_ratio`), a `protobuf` version
 conflict between `pysc2` and `tensorboard`, build actions silently resolving
-to no-ops because SCVs are never "idle" while auto-mining, and a
-supply-headroom masking heuristic that deadlocked the whole economy at game
-start. All fixed and covered by regression tests.
+to no-ops because SCVs are never "idle" while auto-mining, a supply-headroom
+masking heuristic that deadlocked the whole economy at game start, and
+movement sectors being in absolute map coordinates rather than home-relative
+ones (meaning the same action meant opposite things across episodes, since
+spawn corner is randomized -- see "Home-relative sectors" above). All fixed
+and covered by regression tests.
 
 `pytest` covers everything in `src/sc2rl/env/` except the live-client parts
 of `sc2_env_wrapper.py` against fakes/stubs (`tests/fakes/fake_pysc2.py`);

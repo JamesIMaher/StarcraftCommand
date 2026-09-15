@@ -15,6 +15,7 @@ from pysc2.lib import actions as sc2_actions
 
 from .action_space import ActionSpaceSpec, FixedAction
 from .game_state import GameState, UnitInfo
+from .sector_grid import SpawnOrientation
 
 _BUILD_OFFSET_RANGE = 6.0
 _MOVE_VARIANCE = 3.0
@@ -26,7 +27,7 @@ class ActionTranslator:
         self._rng = rng or random.Random()
         self._barracks_cursor = 0
 
-    def translate(self, action_index: int, state: GameState) -> list:
+    def translate(self, action_index: int, state: GameState, orientation: SpawnOrientation) -> list:
         if action_index == FixedAction.NO_OP:
             return [sc2_actions.RAW_FUNCTIONS.no_op()]
         if action_index == FixedAction.BUILD_SUPPLY_DEPOT:
@@ -37,11 +38,11 @@ class ActionTranslator:
             return self._train_marine(state)
         if self.spec.is_move_action(action_index):
             sector = self.spec.sector_for_move_action(action_index)
-            return self._move_army(state, sector)
+            return self._move_army(state, sector, orientation)
         raise ValueError(f"unknown action index: {action_index}")
 
-    def translate_named(self, action_name: str, state: GameState) -> list:
-        return self.translate(self.spec.index_for_name(action_name), state)
+    def translate_named(self, action_name: str, state: GameState, orientation: SpawnOrientation) -> list:
+        return self.translate(self.spec.index_for_name(action_name), state, orientation)
 
     def _pick_scv(self, state: GameState) -> UnitInfo | None:
         # Deliberately not filtered to idle_scvs: a build order interrupts
@@ -75,14 +76,17 @@ class ActionTranslator:
         self._barracks_cursor = (self._barracks_cursor + 1) % len(complete)
         return [sc2_actions.RAW_FUNCTIONS.Train_Marine_quick("now", barracks.tag)]
 
-    def _move_army(self, state: GameState, sector: int) -> list:
+    def _move_army(self, state: GameState, sector: int, orientation: SpawnOrientation) -> list:
         if not state.marines:
             return [sc2_actions.RAW_FUNCTIONS.no_op()]
+        # sector_center() is in canonical (home-relative) space; convert back
+        # to real map coordinates for the actual attack-move order.
         cx, cy = self.spec.grid.sector_center(sector)
+        wx, wy = orientation.to_world(cx, cy)
         calls = []
         for marine in state.marines:
-            tx = cx + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE)
-            ty = cy + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE)
+            tx = wx + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE)
+            ty = wy + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE)
             calls.append(sc2_actions.RAW_FUNCTIONS.Attack_pt("now", marine.tag, (tx, ty)))
         return calls
 
