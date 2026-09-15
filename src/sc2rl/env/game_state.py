@@ -131,6 +131,11 @@ class GameState:
         return [u for u in self.enemies if u.is_structure]
 
     @property
+    def structures(self) -> list[UnitInfo]:
+        """Own buildings -- what "the base" physically is, for home defense."""
+        return self.command_centers + self.supply_depots + self.barracks
+
+    @property
     def command_center_pos(self) -> tuple[float, float] | None:
         if not self.command_centers:
             return None

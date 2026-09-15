@@ -1,6 +1,6 @@
 import pytest
 
-from sc2rl.env.sector_grid import SectorGrid, SpawnOrientation
+from sc2rl.env.sector_grid import SectorGrid, SpawnOrientation, home_sector
 
 
 def make_grid():
@@ -81,6 +81,15 @@ def test_spawn_orientation_mirrors_about_the_bounds_center_not_the_map_center():
     # bounds' center is NOT mirrored.
     near = SpawnOrientation.from_home_position(64, home_x=28, home_y=33, bounds=bounds)
     assert not near.mirror_x and not near.mirror_y
+
+
+def test_home_sector_is_the_command_centers_sector_with_fallback_to_zero():
+    grid = make_grid()
+    identity = SpawnOrientation(map_size=64, mirror_x=False, mirror_y=False)
+    assert home_sector((30.0, 30.0), grid, identity) == 5
+    assert home_sector(None, grid, identity) == 0
+    mirrored = SpawnOrientation.from_home_position(64, home_x=56, home_y=56)
+    assert home_sector((56.0, 56.0), grid, mirrored) == 0  # canonicalized back toward the origin
 
 
 def test_friendly_quadrant_top_left():

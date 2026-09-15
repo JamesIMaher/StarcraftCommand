@@ -16,14 +16,11 @@ the way AlphaStar's full-interface action space did.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable
 
 from .action_masking import MaskingConfig, compute_action_masks
 from .action_space import ActionSpaceSpec, FixedAction
-from .game_state import GameState, UnitInfo
-from .sector_grid import SpawnOrientation
-
-_HOME_SECTOR = 0
+from .game_state import GameState
+from .sector_grid import SpawnOrientation, home_sector, sectors_of
 
 
 @dataclass(frozen=True)
@@ -75,7 +72,8 @@ class ScriptedPolicy:
         masking_config: MaskingConfig,
         orientation: SpawnOrientation,
     ) -> int:
-        mask = compute_action_masks(state, spec, masking_config)
+        home = home_sector(state.command_center_pos, spec.grid, orientation)
+        mask = compute_action_masks(state, spec, masking_config, home_sector=home)
 
         if mask[FixedAction.BUILD_SUPPLY_DEPOT] and len(state.supply_depots) < self.config.target_supply_depots:
             return int(FixedAction.BUILD_SUPPLY_DEPOT)
@@ -88,18 +86,40 @@ class ScriptedPolicy:
         if not can_move:
             return int(FixedAction.NO_OP)
 
-        home_action = spec.move_action_for_sector(_HOME_SECTOR)
-        enemy_sectors = _sectors_of(state.enemies, spec, orientation)
-        if mask[home_action] and _HOME_SECTOR in enemy_sectors:
+        home_action = spec.move_action_for_sector(home)
+        enemy_sectors = sectors_of(state.enemies, spec.grid, orientation)
+        # "The base" is every sector with one of our buildings in it, not
+        # just the command center's -- with ~7-unit cells the base straddles
+        # several, and a counterattack on the barracks next door has to
+        # register as an attack on home.
+        base_sectors = sectors_of(state.structures, spec.grid, orientation) or {home}
+        if mask[home_action] and enemy_sectors & base_sectors:
             self._clear_search_target()  # break off any in-progress search to defend
             return home_action
 
         if len(state.marines) < self.config.attack_threshold:
-            # Not mobilized enough to commit to an offensive yet -- hold
-            # position rather than advance piecemeal.
-            return int(FixedAction.NO_OP)
+            return self._regroup_at_home(state, spec, mask, home, base_sectors, orientation)
 
         return self._search_and_destroy(state, spec, mask, enemy_sectors)
+
+    def _regroup_at_home(self, state, spec, mask, home: int, base_sectors: set[int], orientation) -> int:
+        """Below attack_threshold: not mobilized enough to commit to an
+        offensive. Holding position is right AT home -- but if the army is
+        already out in the field (it advanced at full strength and took
+        losses), holding there means sitting in the middle of the map
+        getting picked off while reinforcements pile up at home, until the
+        count somehow climbs back over the threshold. Observed live exactly
+        so. Regroup at the base instead."""
+        home_action = spec.move_action_for_sector(home)
+        marine_sectors = sectors_of(state.marines, spec.grid, orientation)
+        if marine_sectors <= base_sectors or not mask[home_action]:
+            return int(FixedAction.NO_OP)
+        if self._current_search_target == home and not self._ready_for_new_order(state):
+            self._search_target_steps += 1
+            return int(FixedAction.NO_OP)  # already heading home -- don't re-issue every step
+        self._current_search_target = home
+        self._search_target_steps = 0
+        return home_action
 
     def _search_and_destroy(self, state: GameState, spec, mask, enemy_sectors: set[int]) -> int:
         ready_for_new_order = self._ready_for_new_order(state)
@@ -150,11 +170,3 @@ class ScriptedPolicy:
     def _clear_search_target(self) -> None:
         self._current_search_target = None
         self._search_target_steps = 0
-
-
-def _sectors_of(units: Iterable[UnitInfo], spec: ActionSpaceSpec, orientation: SpawnOrientation) -> set[int]:
-    sectors = set()
-    for unit in units:
-        cx, cy = orientation.to_canonical(unit.x, unit.y)
-        sectors.add(spec.grid.sector_of(cx, cy))
-    return sectors

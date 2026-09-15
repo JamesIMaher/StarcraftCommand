@@ -173,6 +173,59 @@ def test_breaks_off_search_to_defend_home_under_threat():
     assert action == spec.move_action_for_sector(0)
 
 
+def test_defends_the_base_when_the_attack_is_on_a_building_outside_the_command_centers_sector():
+    # "Home" follows the actual buildings, not a hard-coded sector 0: with
+    # ~7-unit cells the base straddles several sectors, and an enemy at the
+    # barracks next door must register as an attack on home. Regression
+    # test for the teacher never coming back to defend (and losing most
+    # games) after the grid was laid over the playable area.
+    spec = make_spec()
+    masking = MaskingConfig(min_marines_to_move=4)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.command_centers.append(fake.command_center(1, x=20, y=20))  # sector 5 on 4x4/64
+    state.barracks.append(fake.barracks(2, x=36, y=20, complete=True))  # sector 6
+    for tag in range(10, 30):
+        state.marines.append(fake.marine(tag, x=56, y=56))  # army away in the far corner
+    state.enemies.append(fake.enemy_unit(99, fake.UNIT_MARINE, x=37, y=21))  # at the barracks
+    policy = ScriptedPolicy(ScriptedPolicyConfig(target_supply_depots=0, target_barracks=0, attack_threshold=20))
+    action = policy.action(state, spec, masking, identity_orientation(spec))
+    assert action == spec.move_action_for_sector(5)  # recall to the command center's sector
+
+
+def test_regroups_at_home_when_below_attack_threshold_out_in_the_field():
+    # Below attack_threshold the teacher holds -- but holding in the middle
+    # of the map after taking losses meant sitting there getting picked off
+    # while reinforcements piled up at home (observed live). It should fall
+    # back to the base instead, and only re-issue that order once idle.
+    spec = make_spec()
+    masking = MaskingConfig(min_marines_to_move=4, min_marines_to_advance=20)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.command_centers.append(fake.command_center(1, x=8, y=8))  # sector 0
+    for tag in range(10):
+        state.marines.append(fake.marine(tag, x=32, y=32, idle=True))  # 10 marines mid-map
+    policy = ScriptedPolicy(ScriptedPolicyConfig(target_supply_depots=0, target_barracks=0, attack_threshold=20))
+    orientation = identity_orientation(spec)
+
+    assert policy.action(state, spec, masking, orientation) == spec.move_action_for_sector(0)
+
+    heading_home = GameState(game_loop=1, minerals=0, food_used=0, food_cap=15)
+    heading_home.command_centers.append(fake.command_center(1, x=8, y=8))
+    for tag in range(10):
+        heading_home.marines.append(fake.marine(tag, x=28, y=28, idle=False))
+    assert policy.action(heading_home, spec, masking, orientation) == FixedAction.NO_OP  # don't re-issue
+
+
+def test_holds_at_home_when_below_attack_threshold_and_already_there():
+    spec = make_spec()
+    masking = MaskingConfig(min_marines_to_move=4, min_marines_to_advance=20)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.command_centers.append(fake.command_center(1, x=8, y=8))
+    for tag in range(10):
+        state.marines.append(fake.marine(tag, x=9, y=9))
+    policy = ScriptedPolicy(ScriptedPolicyConfig(target_supply_depots=0, target_barracks=0, attack_threshold=20))
+    assert policy.action(state, spec, masking, identity_orientation(spec)) == FixedAction.NO_OP
+
+
 def test_no_op_when_nothing_legal():
     spec = make_spec()
     masking = MaskingConfig()

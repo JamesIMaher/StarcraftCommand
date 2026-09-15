@@ -14,8 +14,6 @@ import numpy as np
 from .action_space import ActionSpaceSpec, FixedAction
 from .game_state import GameState
 
-_HOME_SECTOR = 0  # canonical sector nearest home after SpawnOrientation mirroring
-
 
 @dataclass(frozen=True)
 class MaskingConfig:
@@ -43,7 +41,12 @@ class MaskingConfig:
     min_marines_to_advance: int = 20
 
 
-def compute_action_masks(state: GameState, spec: ActionSpaceSpec, config: MaskingConfig) -> np.ndarray:
+def compute_action_masks(
+    state: GameState, spec: ActionSpaceSpec, config: MaskingConfig, home_sector: int = 0
+) -> np.ndarray:
+    """`home_sector` is the sector the command center is in (see
+    sector_grid.home_sector) -- the one move target that only needs
+    min_marines_to_move rather than min_marines_to_advance."""
     mask = np.zeros(spec.num_actions, dtype=bool)
     mask[FixedAction.NO_OP] = True
 
@@ -80,7 +83,7 @@ def compute_action_masks(state: GameState, spec: ActionSpaceSpec, config: Maskin
     can_move = len(state.marines) >= config.min_marines_to_move
     can_advance = len(state.marines) >= config.min_marines_to_advance
     for sector in range(spec.grid.num_sectors):
-        legal = can_move if sector == _HOME_SECTOR else can_advance
+        legal = can_move if sector == home_sector else can_advance
         mask[spec.move_action_for_sector(sector)] = legal
 
     return mask

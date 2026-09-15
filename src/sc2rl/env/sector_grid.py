@@ -6,6 +6,7 @@ no PySC2 imports — so it is trivially unit-testable.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Iterable, Protocol
 
 
 Bounds = tuple[float, float, float, float]  # (min_x, min_y, max_x, max_y)
@@ -142,3 +143,29 @@ class SpawnOrientation:
     def to_world(self, x: float, y: float) -> tuple[float, float]:
         # Mirroring is its own inverse.
         return self.to_canonical(x, y)
+
+
+class _HasPosition(Protocol):
+    x: float
+    y: float
+
+
+def sectors_of(units: Iterable[_HasPosition], grid: SectorGrid, orientation: SpawnOrientation) -> set[int]:
+    return {grid.sector_of(*orientation.to_canonical(u.x, u.y)) for u in units}
+
+
+def home_sector(
+    command_center_pos: tuple[float, float] | None, grid: SectorGrid, orientation: SpawnOrientation
+) -> int:
+    """The sector the command center is actually in. "Home" used to be
+    hard-coded as canonical sector 0 -- true enough with big cells, but
+    once the grid was laid over the playable area (~7-unit cells) the base
+    straddles several sectors and the command center isn't necessarily in
+    the corner one. Everything that meant "home" (defense trigger, recall
+    mask, home-defense penalty) silently pointed at the wrong cell, so a
+    counterattack on the base while the army was away never registered.
+    Falls back to sector 0 with no command center (e.g. after it's lost).
+    """
+    if command_center_pos is None:
+        return 0
+    return grid.sector_of(*orientation.to_canonical(*command_center_pos))

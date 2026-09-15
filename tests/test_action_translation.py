@@ -140,6 +140,26 @@ def test_move_army_to_home_sector_targets_the_command_center_not_the_corner():
     assert abs(target_y - 12) <= 1.0
 
 
+def test_home_recall_follows_the_command_centers_actual_sector():
+    spec = make_spec()
+    translator = ActionTranslator(spec, rng=random.Random(0))
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.marines.append(fake.marine(1, x=60, y=60))
+    state.command_centers.append(fake.command_center(5, x=30, y=30))  # sector 5, not 0
+
+    calls = translator.translate(spec.move_action_for_sector(5), state, identity_orientation(spec))
+    target_x, target_y = calls[0].arguments[2]
+    assert abs(target_x - 30) <= 1.0
+    assert abs(target_y - 30) <= 1.0
+
+    # Sector 0 is now just an ordinary empty sector: swept via its center.
+    calls = translator.translate(spec.move_action_for_sector(0), state, identity_orientation(spec))
+    target_x, target_y = calls[0].arguments[2]
+    center_x, center_y = spec.grid.sector_center(0)
+    assert abs(target_x - center_x) <= 1.0
+    assert abs(target_y - center_y) <= 1.0
+
+
 def test_move_army_ignores_structures_outside_the_target_sector():
     spec = make_spec()
     translator = ActionTranslator(spec, rng=random.Random(0))

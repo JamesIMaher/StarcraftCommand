@@ -388,6 +388,48 @@ def test_home_defense_penalty_capped_per_episode():
     assert total == pytest.approx(-0.15)
 
 
+def test_home_defense_penalty_covers_every_sector_with_a_friendly_building():
+    # Regression test: home used to be hard-coded as sector 0. With ~7-unit
+    # cells the base straddles several sectors, so an enemy at the barracks
+    # next door (and no marine there) must count as an undefended attack on
+    # home even though the command center's sector is quiet.
+    base = [fake.command_center(1, x=8, y=8), fake.barracks(2, x=36, y=20, complete=True)]  # sectors 0 and 6
+    ts0 = fake.make_timestep(units=base, minerals=0, food_cap=15)
+    ts1 = fake.make_timestep(
+        units=base + [fake.enemy_unit(9, fake.UNIT_MARINE, x=37, y=21), fake.marine(3, x=8, y=8)],
+        minerals=0, food_cap=15,
+    )
+    config = EnvConfig()
+    config.grid.cols = config.grid.rows = 4
+    config.reward.shaping_enabled = True
+    config.reward.home_defense_penalty = 0.05
+    config.reward.scouting_bonus = 0.0
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    _, reward, _, _, _ = env.step(FixedAction.NO_OP)
+    assert reward == -0.05  # marine at the CC doesn't defend the barracks' sector
+
+
+def test_base_sectors_start_explored_and_recall_mask_follows_the_command_center():
+    from sc2rl.env.observation import FEATURES_PER_SECTOR, observation_length
+
+    base = [fake.command_center(1, x=30, y=30)]  # sector 5 on 4x4/64
+    ts0 = fake.make_timestep(units=base + [fake.marine(i, x=31, y=31) for i in range(4)], minerals=0, food_cap=15)
+    config = EnvConfig()
+    config.grid.cols = config.grid.rows = 4
+    config.masking.min_marines_to_move = 4
+    config.masking.min_marines_to_advance = 20
+    env, _ = make_env([ts0], config)
+    obs, _ = env.reset()
+
+    global_len = observation_length(env.grid) - FEATURES_PER_SECTOR * env.grid.num_sectors
+    assert obs[global_len + FEATURES_PER_SECTOR * 5 + 5] == 1.0  # CC's sector starts explored
+    assert obs[global_len + FEATURES_PER_SECTOR * 0 + 5] == 0.0  # sector 0 is nothing special now
+    mask = env.action_masks()
+    assert mask[env.action_spec.move_action_for_sector(5)]
+    assert not mask[env.action_spec.move_action_for_sector(0)]
+
+
 def test_scouting_bonus_awarded_once_per_newly_seen_enemy_sector():
     ts0 = fake.make_timestep(minerals=0, food_cap=15)  # no enemies visible yet
     ts1 = fake.make_timestep(units=[fake.enemy_unit(1, fake.UNIT_MARINE, x=56, y=56)], minerals=0, food_cap=15)

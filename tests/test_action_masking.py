@@ -120,6 +120,19 @@ def test_advancing_to_non_home_sectors_needs_higher_marine_count():
     assert all(mask[a] for a in other_actions)
 
 
+def test_home_sector_for_the_low_move_threshold_follows_the_command_center():
+    # The one sector that only needs min_marines_to_move is wherever the
+    # command center actually is, not a hard-coded sector 0.
+    spec = make_spec()
+    config = MaskingConfig(min_marines_to_move=4, min_marines_to_advance=20)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    for tag in range(4):
+        state.marines.append(fake.marine(tag))
+    mask = compute_action_masks(state, spec, config, home_sector=5)
+    assert mask[spec.move_action_for_sector(5)]
+    assert not mask[spec.move_action_for_sector(0)]
+
+
 def test_barracks_and_supply_depot_caps_respected():
     spec = make_spec()
     config = MaskingConfig(max_barracks=1, max_supply_depots=1)

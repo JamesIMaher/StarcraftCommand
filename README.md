@@ -113,8 +113,15 @@ jitter so they don't all path to the identical point). If the sector holds
 a *known enemy structure* (visible, or a fog snapshot of one seen earlier),
 the target is the structure itself -- the one nearest the army -- so "go to
 the sector with the building" resolves to "go to the building." A move to
-the home sector targets the command center (the home sector's geometric
-center is the map corner behind the base). Otherwise it's the sector's
+the command center's sector targets the command center itself, so a recall
+gathers the army at the base rather than at the cell's midpoint. "Home" is
+never a hard-coded sector index: the recall sector follows the command
+center (`sector_grid.home_sector`), and "the base" for defense purposes is
+every sector with one of our buildings in it -- with ~7-unit cells the base
+straddles several, and a hard-coded sector 0 silently missed attacks on the
+barracks next door (confirmed live as the scripted teacher never returning
+to defend, and losing most games, right after the grid was laid over the
+playable area). Otherwise it's the sector's
 center, which at 6x6 already sees the whole cell. Every target is clamped
 strictly inside the game's own `playable_area` (read from
 `SC2Env.game_info` at reset), because the playable area is inset from the
@@ -217,8 +224,8 @@ and per-sector unit presence -- rather than invented heuristics:
   `ep_rew_mean` went *up* twice, once from kill-value alone and later even
   with the discount in place, from economic value alone before it had a cap.
 - **Home-defense penalty** (Economy of Force / Security): a per-step
-  penalty while the home sector has enemy units present and no marines
-  there to respond, capped per episode at `home_defense_penalty_cap`
+  penalty while any sector containing one of our buildings has enemy units
+  present and no marines there to respond, capped per episode at `home_defense_penalty_cap`
   (default `1.0`). Episodes have no step limit (only PySC2's own game-end
   conditions), so an uncapped version of this could accumulate for
   hundreds or thousands of steps in an unusually long episode -- confirmed
@@ -460,11 +467,16 @@ replay actions (mouse/camera/hotkeys) because its action space *was* that
 full interface. Ours is a simplified custom abstraction with no direct
 mapping from human replay data, so the practical equivalent is a **scripted
 teacher** (`env/scripted_policy.py`) operating in our own action space:
-build a small base, keep training marines, defend home if it's under attack
-and undefended, and -- once mobilized to a real attack force
-(`ScriptedPolicyConfig.attack_threshold`, default 20 marines, separate from
-`masking.min_marines_to_move` which only gates whether movement is legal at
-all) -- commit to a **search-and-destroy** pattern: sweep sectors
+build a small base, keep training marines, defend home if any sector with
+one of our buildings is under attack and undefended, and -- once mobilized
+to a real attack force (`ScriptedPolicyConfig.attack_threshold`, default 20
+marines, matching `masking.min_marines_to_advance`) -- commit to a
+**search-and-destroy** pattern. Below the threshold it holds at the base;
+if the army is already out in the field when it drops below (it advanced
+at full strength and took losses), it regroups at the command center
+rather than holding mid-map -- holding there meant getting picked off while
+reinforcements piled up at home, observed live as the army parked at the
+map's center for a very long time. The pattern itself: sweep sectors
 farthest-from-home first, redirecting immediately to any sector where the
 enemy is actually spotted. A new order only fires once the majority of
 marines are idle (`UnitInfo.is_idle` -- no active order, so neither

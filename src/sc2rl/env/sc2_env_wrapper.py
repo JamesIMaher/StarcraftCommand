@@ -37,7 +37,7 @@ from .action_space import ActionSpaceSpec, FixedAction
 from .action_translation import ActionTranslator
 from .game_state import GameState
 from .observation import featurize, observation_length
-from .sector_grid import SectorGrid, SpawnOrientation
+from .sector_grid import SectorGrid, SpawnOrientation, home_sector, sectors_of
 
 _RACE_MAP = {
     "terran": sc2_env.Race.terran,
@@ -45,8 +45,6 @@ _RACE_MAP = {
     "zerg": sc2_env.Race.zerg,
     "random": sc2_env.Race.random,
 }
-
-_HOME_SECTOR = 0  # canonical sector nearest home after SpawnOrientation mirroring
 
 _DIFFICULTY_MAP = {
     "very_easy": sc2_env.Difficulty.very_easy,
@@ -148,10 +146,10 @@ class SC2FightEnv(gym.Env):
         self._prev_total_value = self._state.total_value_units + self._state.total_value_structures
         self._prev_kill_value = self._state.killed_value_units + self._state.killed_value_structures
         self._seen_enemy_sectors = set()
-        # Home sector counts as already "visited" at spawn -- marines start
-        # there, so it shouldn't pay an exploration bonus (or read as
-        # unexplored in the observation) the first time it's checked.
-        self._visited_sectors = {_HOME_SECTOR}
+        # The base's sectors count as already "visited" at spawn -- marines
+        # start there, so they shouldn't pay an exploration bonus (or read as
+        # unexplored in the observation) the first time they're checked.
+        self._visited_sectors = set(self._base_sectors())
         self._newly_visited_this_step: set[int] = set()
         self._steps_since_new_sector = 0
         self._home_defense_total = 0.0
@@ -219,6 +217,16 @@ class SC2FightEnv(gym.Env):
         cx, cy = self._orientation.to_canonical(x, y)
         return self.grid.sector_of(cx, cy)
 
+    def _home_sector(self) -> int:
+        return home_sector(self._state.command_center_pos, self.grid, self._orientation)
+
+    def _base_sectors(self) -> set[int]:
+        """Every sector with one of our buildings in it -- what "home" means
+        for defense. With ~7-unit cells the base straddles several sectors,
+        so a single hard-coded home sector (as this used to be) missed
+        attacks on the buildings next door."""
+        return sectors_of(self._state.structures, self.grid, self._orientation) or {self._home_sector()}
+
     def _compute_orientation(self, state: GameState) -> SpawnOrientation:
         home = state.command_center_pos
         if home is None:
@@ -254,7 +262,9 @@ class SC2FightEnv(gym.Env):
     def action_masks(self) -> np.ndarray:
         if self._state is None:
             return np.zeros(self.action_spec.num_actions, dtype=bool)
-        hard_mask = compute_action_masks(self._state, self.action_spec, self.masking_config)
+        hard_mask = compute_action_masks(
+            self._state, self.action_spec, self.masking_config, home_sector=self._home_sector(),
+        )
         cooldown_mask = self._cooldowns <= 0
         mask = hard_mask & cooldown_mask
         mask[FixedAction.NO_OP] = True
@@ -377,11 +387,12 @@ class SC2FightEnv(gym.Env):
         ever reasoned about a single-step transition, never an
         episode-length accumulation of an uncapped per-step penalty."""
         cfg = self.config.reward
-        enemy_at_home = any(self._sector_of(u.x, u.y) == _HOME_SECTOR for u in self._state.enemies)
-        if not enemy_at_home:
+        base_sectors = self._base_sectors()
+        threatened = {self._sector_of(u.x, u.y) for u in self._state.enemies} & base_sectors
+        if not threatened:
             return 0.0
-        friendly_at_home = any(self._sector_of(u.x, u.y) == _HOME_SECTOR for u in self._state.marines)
-        if friendly_at_home:
+        defended = {self._sector_of(u.x, u.y) for u in self._state.marines}
+        if threatened <= defended:
             return 0.0
         if self._home_defense_total >= cfg.home_defense_penalty_cap:
             return 0.0

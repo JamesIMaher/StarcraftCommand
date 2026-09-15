@@ -15,7 +15,7 @@ from pysc2.lib import actions as sc2_actions
 
 from .action_space import ActionSpaceSpec, FixedAction
 from .game_state import GameState, UnitInfo
-from .sector_grid import SpawnOrientation
+from .sector_grid import SpawnOrientation, home_sector
 
 _BUILD_OFFSET_RANGE = 6.0
 # Small on purpose: this used to be 3.0, giving each marine an independent
@@ -26,8 +26,6 @@ _BUILD_OFFSET_RANGE = 6.0
 # avoidance handles spacing from there); it doesn't need to be large enough
 # to meaningfully separate the group on its own.
 _MOVE_VARIANCE = 0.75
-
-_HOME_SECTOR = 0  # canonical sector nearest home after SpawnOrientation mirroring
 
 
 # Keep clamped targets this far inside the grid's bounds (the playable area,
@@ -99,12 +97,13 @@ class ActionTranslator:
         if not state.marines:
             return [sc2_actions.RAW_FUNCTIONS.no_op()]
         target = self._known_structure_target(state, sector, orientation)
-        if target is None and sector == _HOME_SECTOR and state.command_center_pos is not None:
-            # "Recall/defend home" means the base, not the home sector's
-            # geometric center -- which sits in the map corner behind the
-            # base, typically off the playable area, so the whole army would
-            # bunch up at the cliff edge there instead of at the base.
-            target = state.command_center_pos
+        cc = state.command_center_pos
+        if target is None and cc is not None and sector == home_sector(cc, self.spec.grid, orientation):
+            # "Recall/defend home" means the base itself, not the home
+            # sector's geometric center -- the army should gather at the
+            # command center, not at the cell's midpoint (which, with the old
+            # full-map grid, was the corner cliff behind the base).
+            target = cc
         if target is None:
             # sector_center() is in canonical (home-relative) space; convert
             # back to real map coordinates for the actual attack-move order.
