@@ -30,3 +30,30 @@ def test_collect_produces_matching_length_arrays_with_correct_dtypes():
     assert masks.dtype == bool
     assert observations.shape[1] > 0
     assert masks.shape[1] > 0
+
+
+def test_every_recorded_action_is_legal_under_its_own_recorded_mask():
+    # Regression test: env.action_masks() additionally applies build
+    # cooldowns on top of the scripted policy's own raw legality check, so
+    # they can disagree right after a build order fires. A stub with an SCV
+    # and plenty of minerals every step (but never actually showing a built
+    # supply depot, since the stub replays a fixed observation sequence
+    # regardless of the action taken) makes the scripted policy want
+    # build_supply_depot on every single step -- exactly the scenario where
+    # the mismatch showed up live (blew up BC's loss to ~1.25 million on
+    # the real dataset, since a masked-illegal action's log_prob is
+    # astronomically negative).
+    always_can_build = fake.make_timestep(units=[fake.scv(1, x=5, y=5)], minerals=150, food_cap=15)
+    timesteps = [always_can_build] * 10 + [
+        fake.make_timestep(units=[fake.scv(1, x=5, y=5)], minerals=150, food_cap=15,
+                            reward=1.0, step_type="LAST"),
+    ]
+
+    def env_factory(cfg):
+        return StubSC2Env(timesteps)
+
+    config = Config()
+    observations, actions, masks = collect(config, episodes=1, env_factory=env_factory)
+
+    for i in range(len(actions)):
+        assert masks[i][actions[i]], f"step {i}: action {actions[i]} illegal under its own recorded mask"

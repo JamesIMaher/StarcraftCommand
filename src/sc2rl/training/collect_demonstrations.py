@@ -12,6 +12,7 @@ import argparse
 import numpy as np
 
 from ..config import Config
+from ..env.action_space import FixedAction
 from ..env.sc2_env_wrapper import SC2FightEnv
 from ..env.scripted_policy import ScriptedPolicy, ScriptedPolicyConfig
 
@@ -29,8 +30,21 @@ def collect(config: Config, episodes: int, env_factory=None) -> tuple[np.ndarray
             policy.reset()
             terminated = truncated = False
             while not (terminated or truncated):
+                # env.action_masks() additionally applies build-cooldowns on
+                # top of the raw legality check the scripted policy computes
+                # internally, so the two can disagree right after a build
+                # order fires -- and SC2FightEnv.step() silently substitutes
+                # no_op for an illegal action. Mirror that substitution here
+                # too, so the recorded label always matches what actually
+                # executes; otherwise the dataset records the *intended*
+                # action rather than the real one, and a genuinely illegal
+                # action under its own recorded mask makes BC's masked
+                # log_prob blow up (confirmed: this exact mismatch produced
+                # a loss of ~1.25 million on the first real dataset).
                 mask = env.action_masks()
                 action = policy.action(env.state, env.action_spec, env.masking_config, env.orientation)
+                if not mask[action]:
+                    action = int(FixedAction.NO_OP)
                 observations.append(obs)
                 actions.append(action)
                 masks.append(mask)
