@@ -11,6 +11,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv
 
 from sc2rl.config import EnvConfig
 from sc2rl.env.sc2_env_wrapper import SC2FightEnv
+from sc2rl.training.callbacks import RewardBreakdownCallback
 from tests.fakes import fake_pysc2 as fake
 from tests.test_env_wrapper import StubSC2Env
 
@@ -52,3 +53,23 @@ def test_maskable_ppo_trains_against_stubbed_env_without_error():
     action, _ = model.predict(obs, action_masks=action_masks, deterministic=True)
     assert action.shape == (1,)
     assert 0 <= int(action[0]) < vec_env.action_space.n
+
+
+def test_reward_breakdown_callback_prints_every_episode_end(capsys):
+    # Regression test for a reported gap: the per-component reward breakdown
+    # was exposed via info dict but never wired into any actual output
+    # channel, so it wasn't visible anywhere during training.
+    vec_env = DummyVecEnv([_make_env()])
+    model = MaskablePPO("MlpPolicy", vec_env, n_steps=8, batch_size=4, n_epochs=1, verbose=0)
+
+    model.learn(total_timesteps=16, callback=RewardBreakdownCallback())
+
+    captured = capsys.readouterr()
+    episode_lines = [line for line in captured.out.splitlines() if line.startswith("[episode end]")]
+    assert len(episode_lines) > 0
+    for line in episode_lines:
+        assert "terminal=" in line
+        assert "economic=" in line
+        assert "kill=" in line
+        assert "home_defense=" in line
+        assert "scouting=" in line

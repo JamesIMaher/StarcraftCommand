@@ -339,9 +339,18 @@ All under `env:` in `configs/default.yaml`:
 
 `SC2FightEnv.step()` also returns each component separately in its `info`
 dict (`reward_terminal`, `reward_economic`, `reward_kill`,
-`reward_home_defense`, `reward_scouting`, summing to the total reward) --
-useful for spotting an imbalance directly instead of reasoning about it from
-formulas, e.g. via a custom callback that logs them to TensorBoard.
+`reward_home_defense`, `reward_scouting`, summing to the total reward).
+`training/callbacks.py`'s `RewardBreakdownCallback` (wired into every
+training run by default) accumulates these per episode and prints a line to
+the console the moment each episode ends, e.g.:
+
+```
+[episode end] total=-0.847  terminal=-1.000 economic=+0.320 kill=+0.004 home_defense=-0.150 scouting=+0.020
+```
+
+It also logs each component to TensorBoard under `reward_breakdown/*`. This
+is how to actually see which term is driving an imbalance instead of
+reasoning about it from formulas.
 
 `masking.min_marines_to_move` and `reward.concentration_threshold` are
 separate knobs on purpose -- one is a hard action-legality gate, the other a
