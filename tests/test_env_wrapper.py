@@ -108,20 +108,19 @@ def test_reward_shaping_disabled_by_default_matches_terminal_reward_only():
     assert reward == 0.0  # shaping off by default, mid-episode reward stays 0
 
 
-def test_reward_shaping_enabled_rewards_rising_combat_score():
+def test_reward_shaping_rewards_rising_army_value_regardless_of_marine_count():
     ts0 = fake.make_timestep(minerals=0, food_cap=15, total_value_units=50)
-    ts1 = fake.make_timestep(minerals=0, food_cap=15, reward=0.0, total_value_units=100, killed_value_units=25)
+    ts1 = fake.make_timestep(minerals=0, food_cap=15, reward=0.0, total_value_units=100)
     config = EnvConfig()
     config.reward.shaping_enabled = True
     config.reward.shaping_coefficient = 1.0
     env, _ = make_env([ts0, ts1], config)
     env.reset()
     obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
-    # delta = (100 + 25) - 50 = 75, times coefficient 1.0
-    assert reward == 75.0
+    assert reward == 50.0  # army-value delta is never scaled by concentration
 
 
-def test_reward_shaping_penalizes_falling_combat_score():
+def test_reward_shaping_penalizes_falling_army_value():
     ts0 = fake.make_timestep(minerals=0, food_cap=15, total_value_units=100)
     ts1 = fake.make_timestep(minerals=0, food_cap=15, reward=0.0, total_value_units=50)  # a marine died
     config = EnvConfig()
@@ -131,3 +130,81 @@ def test_reward_shaping_penalizes_falling_combat_score():
     env.reset()
     obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
     assert reward == -50.0
+
+
+def test_reward_shaping_kill_value_gets_partial_credit_below_concentration_threshold():
+    marines = [fake.marine(i, x=1, y=1) for i in range(2)]  # 2 marines, below threshold of 4
+    ts0 = fake.make_timestep(units=marines, minerals=0, food_cap=15, killed_value_units=0)
+    ts1 = fake.make_timestep(units=marines, minerals=0, food_cap=15, reward=0.0, killed_value_units=40)
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.shaping_coefficient = 1.0
+    config.reward.concentration_threshold = 4
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
+    # concentration_factor = 2/4 = 0.5, so only half the kill value is credited
+    assert reward == 20.0
+
+
+def test_reward_shaping_kill_value_gets_full_credit_at_concentration_threshold():
+    marines = [fake.marine(i, x=1, y=1) for i in range(4)]  # meets the threshold of 4
+    ts0 = fake.make_timestep(units=marines, minerals=0, food_cap=15, killed_value_units=0)
+    ts1 = fake.make_timestep(units=marines, minerals=0, food_cap=15, reward=0.0, killed_value_units=40)
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.shaping_coefficient = 1.0
+    config.reward.concentration_threshold = 4
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
+    assert reward == 40.0
+
+
+def test_home_defense_penalty_applied_when_home_undefended():
+    # Home sector (canonical sector 0) has an enemy and no friendly marines.
+    # scouting_bonus zeroed to isolate the defense-penalty term -- this same
+    # enemy sighting would otherwise also trigger a first-sighting bonus.
+    ts0 = fake.make_timestep(minerals=0, food_cap=15)
+    ts1 = fake.make_timestep(units=[fake.enemy_unit(1, fake.UNIT_MARINE, x=1, y=1)], minerals=0, food_cap=15)
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.home_defense_penalty = 0.05
+    config.reward.scouting_bonus = 0.0
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
+    assert reward == -0.05
+
+
+def test_home_defense_penalty_not_applied_when_defenders_present():
+    ts0 = fake.make_timestep(minerals=0, food_cap=15)
+    ts1 = fake.make_timestep(
+        units=[fake.enemy_unit(1, fake.UNIT_MARINE, x=1, y=1), fake.marine(2, x=1, y=1)],
+        minerals=0, food_cap=15,
+    )
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.home_defense_penalty = 0.05
+    config.reward.scouting_bonus = 0.0
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
+    assert reward == 0.0
+
+
+def test_scouting_bonus_awarded_once_per_newly_seen_enemy_sector():
+    ts0 = fake.make_timestep(minerals=0, food_cap=15)  # no enemies visible yet
+    ts1 = fake.make_timestep(units=[fake.enemy_unit(1, fake.UNIT_MARINE, x=56, y=56)], minerals=0, food_cap=15)
+    ts2 = fake.make_timestep(units=[fake.enemy_unit(1, fake.UNIT_MARINE, x=56, y=56)], minerals=0, food_cap=15)
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.scouting_bonus = 0.02
+    env, _ = make_env([ts0, ts1, ts2], config)
+    env.reset()
+
+    _, first_reward, _, _, _ = env.step(FixedAction.NO_OP)
+    assert first_reward == 0.02  # first sighting of that sector
+
+    _, second_reward, _, _, _ = env.step(FixedAction.NO_OP)
+    assert second_reward == 0.0  # same sector already seen this episode

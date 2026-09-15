@@ -29,6 +29,13 @@ class MaskConfig:
     supply_depot_minerals: int = 100
     barracks_minerals: int = 150
     marine_minerals: int = 50
+    # Concentration of Force: don't legalize move_army_to_sector_i actions
+    # until at least this many marines exist. Newly trained marines spawn
+    # near the home base, so while this gate is active they simply stay
+    # clustered at home (passive defense) rather than being sent out
+    # piecemeal -- this directly targets attacking/exploring with too few
+    # units to survive contact.
+    min_marines_to_move: int = 4
 
     @staticmethod
     def from_dict(data: dict) -> "MaskConfig":
@@ -39,13 +46,27 @@ class MaskConfig:
 @dataclass
 class RewardConfig:
     shaping_enabled: bool = False
-    # combat_score (GameState.combat_score) is a raw mineral-equivalent value
-    # -- it can accumulate into the hundreds or more over a full episode as
-    # marines get built and enemies get killed. This coefficient is scaled
-    # down accordingly so the summed shaping reward over an episode stays
-    # roughly comparable to the terminal +-1 win/loss reward rather than
-    # swamping it; treat it as a starting point to tune, not a tuned value.
+    # total_value_units / killed_value_units / killed_value_structures are
+    # raw mineral-equivalent values -- they can accumulate into the hundreds
+    # or more over a full episode as marines get built and enemies get
+    # killed. This coefficient is scaled down accordingly so the summed
+    # shaping reward over an episode stays roughly comparable to the
+    # terminal +-1 win/loss reward rather than swamping it; treat it as a
+    # starting point to tune, not a tuned value.
     shaping_coefficient: float = 0.001
+    # Mass / Concentration of Force: the killed_value portion of the shaping
+    # reward is scaled by min(1, marine_count / concentration_threshold), so
+    # a kill landed with a large army earns full credit while a kill landed
+    # with a tiny, exposed squad earns much less -- discourages treating
+    # opportunistic small-squad kills as a winning strategy on their own.
+    concentration_threshold: int = 4
+    # Economy of Force / Security: per-step penalty while the home sector has
+    # enemy units present and no friendly marines there to respond.
+    home_defense_penalty: float = 0.05
+    # OODA loop (Observe): one-time reward the first time an enemy unit is
+    # ever seen in a given sector during an episode -- rewards scouting
+    # itself, separate from combat outcomes.
+    scouting_bonus: float = 0.02
 
     @staticmethod
     def from_dict(data: dict) -> "RewardConfig":

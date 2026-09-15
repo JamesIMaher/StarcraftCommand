@@ -46,6 +46,8 @@ _RACE_MAP = {
     "random": sc2_env.Race.random,
 }
 
+_HOME_SECTOR = 0  # canonical sector nearest home after SpawnOrientation mirroring
+
 _DIFFICULTY_MAP = {
     "very_easy": sc2_env.Difficulty.very_easy,
     "easy": sc2_env.Difficulty.easy,
@@ -96,12 +98,15 @@ class SC2FightEnv(gym.Env):
             supply_depot_minerals=config.masking.supply_depot_minerals,
             barracks_minerals=config.masking.barracks_minerals,
             marine_minerals=config.masking.marine_minerals,
+            min_marines_to_move=config.masking.min_marines_to_move,
         )
         self._translator = ActionTranslator(self.action_spec)
         self._sc2_env = None
         self._state: GameState | None = None
         self._cooldowns = np.zeros(self.action_spec.num_actions, dtype=np.int32)
-        self._prev_combat_score = 0
+        self._prev_total_value_units = 0
+        self._prev_kill_value = 0
+        self._seen_enemy_sectors: set[int] = set()
         self._orientation = SpawnOrientation(map_size=config.map_size, mirror_x=False, mirror_y=False)
 
         self.action_space = spaces.Discrete(self.action_spec.num_actions)
@@ -118,10 +123,16 @@ class SC2FightEnv(gym.Env):
         timesteps = self._sc2_env.reset()
         self._cooldowns[:] = 0
         self._state = GameState.from_observation(timesteps[0])
-        self._prev_combat_score = self._state.combat_score
         self._orientation = self._compute_orientation(self._state)
+        self._prev_total_value_units = self._state.total_value_units
+        self._prev_kill_value = self._state.killed_value_units + self._state.killed_value_structures
+        self._seen_enemy_sectors = set()
         obs = featurize(self._state, self.grid, self.config.max_game_loop_norm, self._orientation)
         return obs, {}
+
+    def _sector_of(self, x: float, y: float) -> int:
+        cx, cy = self._orientation.to_canonical(x, y)
+        return self.grid.sector_of(cx, cy)
 
     def _compute_orientation(self, state: GameState) -> SpawnOrientation:
         home = state.command_center_pos
@@ -169,15 +180,49 @@ class SC2FightEnv(gym.Env):
     def _compute_reward(self, ts) -> float:
         reward = float(ts.reward)
         if self.config.reward.shaping_enabled and not ts.last():
-            # combat_score = total_value_units + killed_value_units +
-            # killed_value_structures, all maintained by the game engine
-            # itself (see GameState.combat_score) -- rises as you train and
-            # keep marines and deal damage, falls as your own units die.
-            current = self._state.combat_score
-            delta = current - self._prev_combat_score
-            reward += self.config.reward.shaping_coefficient * delta
-            self._prev_combat_score = current
+            reward += self._combat_shaping_reward()
+            reward += self._home_defense_penalty()
+            reward += self._scouting_bonus()
         return reward
+
+    def _combat_shaping_reward(self) -> float:
+        """Army-value growth is always rewarded/penalized in full; the
+        killed-value portion is scaled by min(1, marine_count /
+        concentration_threshold) -- Mass / Concentration of Force -- so a
+        kill landed with a large army earns full credit while one landed
+        with a tiny, exposed squad earns much less."""
+        cfg = self.config.reward
+        total_value = self._state.total_value_units
+        kill_value = self._state.killed_value_units + self._state.killed_value_structures
+
+        army_delta = total_value - self._prev_total_value_units
+        kill_delta = kill_value - self._prev_kill_value
+        concentration_factor = min(1.0, len(self._state.marines) / max(cfg.concentration_threshold, 1))
+
+        self._prev_total_value_units = total_value
+        self._prev_kill_value = kill_value
+
+        return cfg.shaping_coefficient * (army_delta + concentration_factor * kill_delta)
+
+    def _home_defense_penalty(self) -> float:
+        """Economy of Force / Security: per-step penalty while the home
+        sector has enemy units present and no friendly marines there to
+        respond."""
+        enemy_at_home = any(self._sector_of(u.x, u.y) == _HOME_SECTOR for u in self._state.enemies)
+        if not enemy_at_home:
+            return 0.0
+        friendly_at_home = any(self._sector_of(u.x, u.y) == _HOME_SECTOR for u in self._state.marines)
+        return 0.0 if friendly_at_home else -self.config.reward.home_defense_penalty
+
+    def _scouting_bonus(self) -> float:
+        """OODA loop (Observe): one-time reward the first time an enemy unit
+        is seen in a given sector during this episode."""
+        seen_this_step = {self._sector_of(u.x, u.y) for u in self._state.enemies}
+        newly_seen = seen_this_step - self._seen_enemy_sectors
+        if not newly_seen:
+            return 0.0
+        self._seen_enemy_sectors |= newly_seen
+        return self.config.reward.scouting_bonus * len(newly_seen)
 
     def close(self):
         if self._sc2_env is not None:

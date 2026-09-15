@@ -69,14 +69,23 @@ def test_train_marine_blocked_at_supply_cap():
     assert not compute_action_masks(state, spec, config)[FixedAction.TRAIN_MARINE]
 
 
-def test_move_actions_need_marines():
+def test_move_actions_need_minimum_marine_count():
+    # Concentration of Force: movement/attack is illegal below the
+    # configured minimum marine count, not just "any marines at all" --
+    # newly trained marines default to staying clustered at home until mass
+    # is reached, instead of being sent out piecemeal.
     spec = make_spec()
-    config = MaskingConfig()
+    config = MaskingConfig(min_marines_to_move=4)
     state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
     mask = compute_action_masks(state, spec, config)
     assert not any(mask[spec.move_action_for_sector(s)] for s in range(spec.grid.num_sectors))
 
-    state.marines.append(fake.marine(1))
+    for tag in range(1, 4):
+        state.marines.append(fake.marine(tag))
+    mask = compute_action_masks(state, spec, config)
+    assert not any(mask[spec.move_action_for_sector(s)] for s in range(spec.grid.num_sectors))
+
+    state.marines.append(fake.marine(4))
     mask = compute_action_masks(state, spec, config)
     assert all(mask[spec.move_action_for_sector(s)] for s in range(spec.grid.num_sectors))
 

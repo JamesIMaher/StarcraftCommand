@@ -62,7 +62,11 @@ cell (16 at the default 4x4 grid). `action_masking.py` computes which of
 these are legal each step (afford checks, unit existence, per-type caps) --
 illegal actions never get sampled at all rather than resolving to a silent
 no-op, because `MaskablePPO` zeroes out their probability directly in the
-action distribution before sampling.
+action distribution before sampling. Movement/attack actions specifically
+stay illegal until `masking.min_marines_to_move` marines exist (**Mass /
+Concentration of Force**) -- newly trained marines spawn near home, so while
+blocked they default to passive defense there rather than being committed
+piecemeal.
 
 **Neural network.** `MaskablePPO`'s default `MlpPolicy`
 (`sb3_contrib.common.maskable.policies.MaskableActorCriticPolicy`) is two
@@ -88,9 +92,30 @@ the same net_arch/algorithm regardless of CPU or GPU (`sb3-contrib` picks
 the device automatically via `device="auto"`).
 
 **Reward.** PySC2's own terminal win/loss reward (+1/-1/0), passed straight
-through. Optional dense per-step shaping (friendly/enemy army-value delta)
-exists but is off by default (`env.reward.shaping_enabled`) so the first real
-run validates against a clean sparse-reward baseline.
+through, plus optional dense per-step shaping (`env.reward.shaping_enabled`,
+on by default) built from real PySC2 signals -- `obs.observation.score_cumulative`
+and per-sector unit presence -- rather than invented heuristics:
+
+- **Army value delta** (`total_value_units`, uncapped): rises as you train
+  and keep marines, falls when they die. Always fully rewarded/penalized.
+- **Kill value, scaled by Concentration of Force**: `killed_value_units` +
+  `killed_value_structures` delta, multiplied by
+  `min(1, marine_count / concentration_threshold)`. A kill landed with a
+  large army earns full credit; one landed with a small, exposed squad earns
+  much less -- discourages treating opportunistic small-squad trades as a
+  winning strategy on their own.
+- **Home-defense penalty** (Economy of Force / Security): a per-step
+  penalty while the home sector has enemy units present and no marines
+  there to respond.
+- **Scouting bonus** (OODA loop -- Observe): a one-time reward the first
+  time an enemy unit is seen in a given sector during an episode, rewarding
+  exploration itself rather than only its downstream combat consequences.
+
+All shaping coefficients are deliberately small relative to the terminal
++-1 reward (see the comments in `config.py`) -- shaping nudges the policy
+toward useful sub-behaviors faster than sparse win/loss alone could teach
+them, but the actual objective stays winning the game, not maximizing the
+shaped proxy.
 
 ## Repository layout
 
@@ -272,8 +297,8 @@ python -m sc2rl.inference.play --checkpoint checkpoints/final_model --episodes 5
 - Action space: `no_op`, `build_supply_depot`, `build_barracks`,
   `train_marine`, plus one `move_army_to_sector_i` per grid cell (default
   4x4 = 16 cells) -- 20 actions total.
-- Reward: PySC2's own terminal win/loss reward, sparse-only by default (see
-  "How it works" above for the optional shaping term).
+- Reward: PySC2's own terminal win/loss reward plus dense shaping, on by
+  default (see "How it works" above for the individual terms).
 - Single environment (`DummyVecEnv` with one `SC2FightEnv`). StarCraft II's
   per-step client overhead is the real bottleneck, not neural-net compute or
   environment parallelism -- revisit `SubprocVecEnv` (multiple concurrent

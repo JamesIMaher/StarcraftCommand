@@ -22,6 +22,11 @@ class MaskingConfig:
     supply_depot_minerals: int = 100
     barracks_minerals: int = 150
     marine_minerals: int = 50
+    # Concentration of Force: below this many marines, movement/attack
+    # actions are illegal entirely. Newly trained marines spawn near home, so
+    # while blocked they simply stay clustered there (passive defense)
+    # instead of being sent out piecemeal.
+    min_marines_to_move: int = 4
 
 
 def compute_action_masks(state: GameState, spec: ActionSpaceSpec, config: MaskingConfig) -> np.ndarray:
@@ -58,7 +63,7 @@ def compute_action_masks(state: GameState, spec: ActionSpaceSpec, config: Maskin
     )
     mask[FixedAction.TRAIN_MARINE] = can_train_marine
 
-    can_move = len(state.marines) > 0
+    can_move = len(state.marines) >= config.min_marines_to_move
     for sector in range(spec.grid.num_sectors):
         mask[spec.move_action_for_sector(sector)] = can_move
 

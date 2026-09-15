@@ -16,9 +16,13 @@ env:
     supply_depot_minerals: 100
     barracks_minerals: 150
     marine_minerals: 50
+    min_marines_to_move: 4
   reward:
     shaping_enabled: true
     shaping_coefficient: 0.001
+    concentration_threshold: 4
+    home_defense_penalty: 0.05
+    scouting_bonus: 0.02
 
 training:
   checkpoint_dir: checkpoints

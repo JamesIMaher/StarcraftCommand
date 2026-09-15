@@ -109,13 +109,6 @@ class GameState:
     def supply_headroom(self) -> int:
         return self.food_cap - self.food_used
 
-    @property
-    def combat_score(self) -> int:
-        """Rises as you build/keep units and kill enemy units/structures;
-        falls when your own units die. Used as the per-step reward-shaping
-        signal -- see sc2_env_wrapper.py."""
-        return self.total_value_units + self.killed_value_units + self.killed_value_structures
-
     @classmethod
     def from_observation(cls, obs) -> "GameState":
         player = obs.observation.player

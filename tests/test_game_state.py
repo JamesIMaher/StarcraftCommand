@@ -63,10 +63,9 @@ def test_command_center_pos_returns_coords():
     assert state.command_center_pos == (12.5, 7.5)
 
 
-def test_combat_score_sums_the_relevant_score_cumulative_fields():
+def test_score_cumulative_fields_parsed():
     ts = fake.make_timestep(total_value_units=100, killed_value_units=25, killed_value_structures=10)
     state = GameState.from_observation(ts)
     assert state.total_value_units == 100
     assert state.killed_value_units == 25
     assert state.killed_value_structures == 10
-    assert state.combat_score == 135
