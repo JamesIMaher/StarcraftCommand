@@ -107,6 +107,7 @@ class SC2FightEnv(gym.Env):
         self._prev_total_value = 0
         self._prev_kill_value = 0
         self._seen_enemy_sectors: set[int] = set()
+        self._last_reward_breakdown: dict[str, float] = {}
         self._orientation = SpawnOrientation(map_size=config.map_size, mirror_x=False, mirror_y=False)
 
         self.action_space = spaces.Discrete(self.action_spec.num_actions)
@@ -161,7 +162,7 @@ class SC2FightEnv(gym.Env):
         reward = self._compute_reward(ts)
         terminated = bool(ts.last())
         truncated = False
-        return obs, reward, terminated, truncated, {}
+        return obs, reward, terminated, truncated, dict(self._last_reward_breakdown)
 
     def action_masks(self) -> np.ndarray:
         if self._state is None:
@@ -186,27 +187,49 @@ class SC2FightEnv(gym.Env):
         # game, so a losing episode's total reward could still come out
         # strongly positive. Computing it here too means the delta correctly
         # reflects whatever the actual final state is.
-        reward = float(ts.reward) * self.config.reward.terminal_reward_scale
+        reward_terminal = float(ts.reward) * self.config.reward.terminal_reward_scale
+        reward_economic = 0.0
+        reward_kill = 0.0
+        reward_home_defense = 0.0
+        reward_scouting = 0.0
         if self.config.reward.shaping_enabled:
-            reward += self._combat_shaping_reward()
-            reward += self._home_defense_penalty()
-            reward += self._scouting_bonus()
-        return reward
+            reward_economic, reward_kill = self._combat_shaping_reward()
+            reward_home_defense = self._home_defense_penalty()
+            reward_scouting = self._scouting_bonus()
 
-    def _combat_shaping_reward(self) -> float:
-        """Economic-value growth (units AND structures -- training a marine
-        or completing a supply depot/barracks both count) is always
-        rewarded/penalized in full; the killed-value portion is scaled by
-        min(1, marine_count / concentration_threshold) -- Mass /
-        Concentration of Force -- so a kill landed with a large army earns
-        full credit while one landed with a tiny, exposed squad earns much
-        less.
+        self._last_reward_breakdown = {
+            "reward_terminal": reward_terminal,
+            "reward_economic": reward_economic,
+            "reward_kill": reward_kill,
+            "reward_home_defense": reward_home_defense,
+            "reward_scouting": reward_scouting,
+        }
+        return reward_terminal + reward_economic + reward_kill + reward_home_defense + reward_scouting
 
-        Including total_value_structures matters: without it, building a
-        supply depot or barracks earned zero immediate shaped reward (only
-        the eventual marines trained from it did), which is a weak, indirect
-        signal for "build infrastructure early" -- observed in practice as
-        the policy learning to delay barracks construction.
+    def _combat_shaping_reward(self) -> tuple[float, float]:
+        """Returns (economic_reward, kill_reward) separately -- see
+        step()'s _last_reward_breakdown -- rather than a single combined
+        value, so each component's magnitude is directly inspectable instead
+        of needing to be reasoned about from formulas after the fact.
+
+        Economic-value growth (units AND structures -- training a marine or
+        completing a supply depot/barracks both count) is always
+        rewarded/penalized in full. Including total_value_structures matters:
+        without it, building a supply depot or barracks earned zero
+        immediate shaped reward (only the eventual marines trained from it
+        did), which is a weak, indirect signal for "build infrastructure
+        early" -- observed in practice as the policy learning to delay
+        barracks construction.
+
+        The killed-value portion is scaled by min(1, marine_count /
+        concentration_threshold) -- Mass / Concentration of Force -- so a
+        kill landed with a large army earns full credit while one landed
+        with a tiny, exposed squad earns much less, AND by the separate,
+        smaller kill_value_scale, since killed_value only ever increases
+        (kills aren't offset by an eventual loss the way economic value is)
+        -- observed in practice: a losing episode's ep_rew_mean went UP,
+        because kills traded during a losing fight outweighed the terminal
+        penalty and the (comparatively small) economic-collapse penalty.
         """
         cfg = self.config.reward
         total_value = self._state.total_value_units + self._state.total_value_structures
@@ -219,7 +242,9 @@ class SC2FightEnv(gym.Env):
         self._prev_total_value = total_value
         self._prev_kill_value = kill_value
 
-        return cfg.shaping_coefficient * (army_delta + concentration_factor * kill_delta)
+        economic_reward = cfg.shaping_coefficient * army_delta
+        kill_reward = cfg.shaping_coefficient * cfg.kill_value_scale * concentration_factor * kill_delta
+        return economic_reward, kill_reward
 
     def _home_defense_penalty(self) -> float:
         """Economy of Force / Security: per-step penalty while the home

@@ -60,6 +60,16 @@ class RewardConfig:
     # with a tiny, exposed squad earns much less -- discourages treating
     # opportunistic small-squad kills as a winning strategy on their own.
     concentration_threshold: int = 4
+    # killed_value_units/killed_value_structures only ever increase (kills
+    # aren't "undone"), so unlike economic value it is NOT offset by an
+    # eventual loss -- observed in practice: a losing episode's ep_rew_mean
+    # went UP, because kills traded during a losing fight outweighed the
+    # terminal penalty and the (comparatively small) economic-collapse
+    # penalty. This is a separate, additional discount on top of
+    # shaping_coefficient specifically for the killed-value portion, so
+    # "traded some kills before losing" stays a minor bonus rather than
+    # something that can rival actually winning.
+    kill_value_scale: float = 0.1
     # Economy of Force / Security: per-step penalty while the home sector has
     # enemy units present and no friendly marines there to respond.
     home_defense_penalty: float = 0.05

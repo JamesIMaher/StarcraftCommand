@@ -102,12 +102,18 @@ and per-sector unit presence -- rather than invented heuristics:
   Including structures matters -- without it, building a barracks earned no
   immediate reward (only its eventual marines did), which showed up in
   practice as the policy learning to delay barracks construction.
-- **Kill value, scaled by Concentration of Force**: `killed_value_units` +
-  `killed_value_structures` delta, multiplied by
-  `min(1, marine_count / concentration_threshold)`. A kill landed with a
+- **Kill value, scaled by Concentration of Force AND discounted**:
+  `killed_value_units` + `killed_value_structures` delta, multiplied by both
+  `min(1, marine_count / concentration_threshold)` (a kill landed with a
   large army earns full credit; one landed with a small, exposed squad earns
-  much less -- discourages treating opportunistic small-squad trades as a
-  winning strategy on their own.
+  much less) and the separate `kill_value_scale` (default `0.1`). The extra
+  discount matters because killed-value only ever increases -- it is *not*
+  offset by an eventual loss the way economic value is -- confirmed in
+  practice: a losing episode's `ep_rew_mean` went *up*, because kills traded
+  during a losing fight outweighed the terminal penalty and the
+  (comparatively small) economic-collapse penalty. `kill_value_scale` keeps
+  "traded some kills before losing" a minor bonus, not something that can
+  rival actually winning.
 - **Home-defense penalty** (Economy of Force / Security): a per-step
   penalty while the home sector has enemy units present and no marines
   there to respond.
@@ -326,9 +332,16 @@ All under `env:` in `configs/default.yaml`:
 | `reward.shaping_enabled` | `true` | Master on/off switch for everything below |
 | `reward.shaping_coefficient` | `0.001` | Scales the army-value and kill-value shaping terms |
 | `reward.concentration_threshold` | `4` | Marine count for full kill-reward credit; scaled down below it |
+| `reward.kill_value_scale` | `0.1` | Additional discount on kill-value credit, on top of concentration scaling |
 | `reward.home_defense_penalty` | `0.05` | Per-step penalty while home is undefended and under attack |
 | `reward.scouting_bonus` | `0.02` | One-time reward per newly-sighted enemy sector per episode |
 | `reward.terminal_reward_scale` | `1.0` | Multiplies PySC2's own terminal win/loss reward |
+
+`SC2FightEnv.step()` also returns each component separately in its `info`
+dict (`reward_terminal`, `reward_economic`, `reward_kill`,
+`reward_home_defense`, `reward_scouting`, summing to the total reward) --
+useful for spotting an imbalance directly instead of reasoning about it from
+formulas, e.g. via a custom callback that logs them to TensorBoard.
 
 `masking.min_marines_to_move` and `reward.concentration_threshold` are
 separate knobs on purpose -- one is a hard action-legality gate, the other a

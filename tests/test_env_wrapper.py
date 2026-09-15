@@ -185,6 +185,7 @@ def test_reward_shaping_kill_value_gets_partial_credit_below_concentration_thres
     config = EnvConfig()
     config.reward.shaping_enabled = True
     config.reward.shaping_coefficient = 1.0
+    config.reward.kill_value_scale = 1.0  # isolate concentration scaling from the separate kill discount
     config.reward.concentration_threshold = 4
     env, _ = make_env([ts0, ts1], config)
     env.reset()
@@ -200,11 +201,32 @@ def test_reward_shaping_kill_value_gets_full_credit_at_concentration_threshold()
     config = EnvConfig()
     config.reward.shaping_enabled = True
     config.reward.shaping_coefficient = 1.0
+    config.reward.kill_value_scale = 1.0  # isolate concentration scaling from the separate kill discount
     config.reward.concentration_threshold = 4
     env, _ = make_env([ts0, ts1], config)
     env.reset()
     obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
     assert reward == 40.0
+
+
+def test_reward_shaping_kill_value_discounted_by_kill_value_scale():
+    # Regression test for the reported bug: a losing episode's ep_rew_mean
+    # went UP after a loss, because kill-value credit (uncapped, not offset
+    # by an eventual defeat the way economic value is) outweighed the
+    # terminal penalty. kill_value_scale discounts it further on top of the
+    # concentration-of-force scaling.
+    marines = [fake.marine(i, x=1, y=1) for i in range(4)]  # at/above threshold -> concentration_factor = 1.0
+    ts0 = fake.make_timestep(units=marines, minerals=0, food_cap=15, killed_value_units=0)
+    ts1 = fake.make_timestep(units=marines, minerals=0, food_cap=15, reward=0.0, killed_value_units=40)
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.shaping_coefficient = 1.0
+    config.reward.kill_value_scale = 0.1
+    config.reward.concentration_threshold = 4
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
+    assert reward == 4.0  # 40 * kill_value_scale(0.1) * concentration_factor(1.0)
 
 
 def test_home_defense_penalty_applied_when_home_undefended():
@@ -254,3 +276,23 @@ def test_scouting_bonus_awarded_once_per_newly_seen_enemy_sector():
 
     _, second_reward, _, _, _ = env.step(FixedAction.NO_OP)
     assert second_reward == 0.0  # same sector already seen this episode
+
+
+def test_step_info_exposes_per_component_reward_breakdown():
+    # So an imbalance between components (e.g. kill-value outweighing a
+    # loss) is directly inspectable instead of needing to be reasoned about
+    # from formulas after the fact.
+    ts0 = fake.make_timestep(minerals=0, food_cap=15, total_value_units=50)
+    ts1 = fake.make_timestep(minerals=0, food_cap=15, reward=1.0, total_value_units=100, step_type="LAST")
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.shaping_coefficient = 1.0
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
+    assert info["reward_terminal"] == 1.0
+    assert info["reward_economic"] == 50.0
+    assert set(info.keys()) == {
+        "reward_terminal", "reward_economic", "reward_kill", "reward_home_defense", "reward_scouting",
+    }
+    assert reward == sum(info.values())
