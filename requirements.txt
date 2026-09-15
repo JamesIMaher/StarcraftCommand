@@ -1,0 +1,15 @@
+# torch is intentionally NOT listed here -- install it first from the CPU-only
+# index (see README "Setup"), otherwise a plain `pip install torch` pulls a
+# multi-GB CUDA build you don't need for this MLP-sized policy.
+pysc2
+# Pinned: pysc2's pulled-in s2clientprotocol wheel was generated with an old
+# protoc and breaks ("Descriptors cannot be created directly") under protobuf
+# >=4. 3.20.3 is the newest version that still works without the slow
+# PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python pure-Python fallback.
+protobuf==3.20.3
+stable-baselines3
+sb3-contrib
+gymnasium
+numpy
+pyyaml
+pytest

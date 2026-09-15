@@ -1,0 +1,38 @@
+env:
+  map_name: Simple64
+  opponent_race: zerg
+  difficulty: very_easy
+  map_size: 64
+  step_mul: 8
+  build_cooldown_steps: 3
+  max_game_loop_norm: 20000
+  visualize: false
+  grid:
+    cols: 4
+    rows: 4
+  masking:
+    max_supply_depots: 8
+    max_barracks: 4
+    supply_depot_minerals: 100
+    barracks_minerals: 150
+    marine_minerals: 50
+    supply_headroom_threshold: 4
+  reward:
+    shaping_enabled: false
+    shaping_coefficient: 0.01
+
+training:
+  checkpoint_dir: checkpoints
+  checkpoint_freq: 5000
+  tensorboard_log: runs
+  ppo:
+    total_timesteps: 200000
+    learning_rate: 0.0003
+    n_steps: 256
+    batch_size: 64
+    n_epochs: 10
+    gamma: 0.99
+    gae_lambda: 0.95
+    clip_range: 0.2
+    ent_coef: 0.01
+    seed: null

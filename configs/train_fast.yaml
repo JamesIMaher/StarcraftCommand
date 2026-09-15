@@ -1,0 +1,25 @@
+# Small/short config for a quick smoke run once StarCraft II is installed --
+# confirms the training loop, checkpointing, and TensorBoard logging all work
+# end-to-end before committing to a long run with configs/default.yaml.
+env:
+  map_name: Simple64
+  opponent_race: zerg
+  difficulty: very_easy
+  map_size: 64
+  step_mul: 16
+  build_cooldown_steps: 3
+  max_game_loop_norm: 20000
+  visualize: false
+  grid:
+    cols: 4
+    rows: 4
+
+training:
+  checkpoint_dir: checkpoints/fast
+  checkpoint_freq: 500
+  tensorboard_log: runs/fast
+  ppo:
+    total_timesteps: 2000
+    n_steps: 64
+    batch_size: 32
+    n_epochs: 4

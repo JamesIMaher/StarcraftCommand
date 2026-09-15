@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# Training artifacts
+checkpoints/
+replays/
+runs/
+tensorboard/
+*.zip
+
+# OS / editor
+.vs/
+.vscode/
+*.suo
+*.user
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
