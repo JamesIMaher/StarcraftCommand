@@ -31,6 +31,54 @@ See `src/sc2rl/env/` for the core modules; every file there except
 dependency, which is what makes the whole thing unit-testable without a
 running StarCraft II client (see "Status" below).
 
+## How it works
+
+**Observation.** Each step, `GameState.from_observation()` parses PySC2's
+`raw_units`/`player` fields into a snapshot, and `observation.py` turns that
+into a flat `float32` vector: ~19 global scalars (minerals, supply
+used/cap/headroom, marine count + average health, SCV count, supply
+depot/barracks counts -- in-progress and complete, visible enemy count +
+health, enemy race one-hot, episode-progress fraction) plus 4 features per
+grid sector (friendly/enemy count and average health in that sector) for a
+4x4 grid -- 83 floats total at the default grid size. This is a
+`gymnasium.spaces.Box(0.0, 1.0, shape=(83,))`.
+
+**Action space.** A flat `Discrete(20)`: `no_op`, `build_supply_depot`,
+`build_barracks`, `train_marine`, plus one `move_army_to_sector_i` per grid
+cell (16 at the default 4x4 grid). `action_masking.py` computes which of
+these are legal each step (afford checks, unit existence, per-type caps) --
+illegal actions never get sampled at all rather than resolving to a silent
+no-op, because `MaskablePPO` zeroes out their probability directly in the
+action distribution before sampling.
+
+**Neural network.** `MaskablePPO`'s default `MlpPolicy`
+(`sb3_contrib.common.maskable.policies.MaskableActorCriticPolicy`) is two
+small separate PyTorch MLPs reading the same 83-dim input: a **policy head**
+(2 hidden layers x 64 units, `Tanh` activation, outputting 20 logits -> the
+per-action probabilities after masking) and a **value head** (same shape,
+outputting a single scalar -- the estimated value of the current state).
+There's no shared trunk and no CNN/spatial convolution -- the input is
+already the flat engineered feature vector above, not raw pixels, so a small
+MLP is all that's needed.
+
+**Training algorithm (PPO).** Each training iteration: (1) roll out
+`n_steps` (256 by default) actions in the live environment using the current
+policy, recording observations/actions/rewards/masks/value estimates; (2)
+compute advantages via Generalized Advantage Estimation (GAE, `gamma` /
+`gae_lambda`); (3) run `n_epochs` passes of minibatch (`batch_size`) gradient
+descent over that rollout with the Adam optimizer, on the PPO clipped
+surrogate loss (`clip_range` limits how far a single update can move the
+policy) plus a value-function loss and an entropy bonus (`ent_coef`,
+encourages exploration). This is what actually updates the PyTorch weights
+-- `model.learn()` in `src/sc2rl/training/train.py` runs this loop, and it's
+the same net_arch/algorithm regardless of CPU or GPU (`sb3-contrib` picks
+the device automatically via `device="auto"`).
+
+**Reward.** PySC2's own terminal win/loss reward (+1/-1/0), passed straight
+through. Optional dense per-step shaping (friendly/enemy army-value delta)
+exists but is off by default (`env.reward.shaping_enabled`) so the first real
+run validates against a clean sparse-reward baseline.
+
 ## Repository layout
 
 ```
@@ -44,13 +92,17 @@ src/sc2rl/
     action_space.py         named Discrete(N) action registry
     action_masking.py       legality mask (MaskablePPO's action_masks() source)
     action_translation.py   action index/name -> raw PySC2 FunctionCalls
-  training/train.py         MaskablePPO training entrypoint
+  training/train.py         MaskablePPO training entrypoint (supports --resume-from)
   inference/play.py         run a trained checkpoint against a live game
   config.py                 YAML -> typed config
 tests/                     pytest suite, entirely against fakes/stubs (see tests/fakes/fake_pysc2.py)
 ```
 
 ## Setup
+
+Needed on **every** machine you run this on (training or inference) --
+StarCraft II itself has no cross-machine state, so this is the same on your
+work PC and on a second machine (e.g. one with a real GPU).
 
 ### 1. Python 3.10
 
@@ -61,59 +113,100 @@ targets **3.10** specifically.
 winget install --id Python.Python.3.10 --source winget
 ```
 
-### 2. Virtual environment
+### 2. Clone the repo and create a virtual environment
 
 ```powershell
+git clone git@github.com:<your-username>/StarcraftCommand.git
+cd StarcraftCommand
 py -3.10 -m venv .venv
 .venv\Scripts\Activate.ps1
 ```
 
+(SSH clone needs your SSH key present/loaded on that machine -- `ssh-add` it,
+or use the HTTPS clone URL with a personal access token instead.)
+
 ### 3. Install dependencies
 
-PyTorch is deliberately **not** in `requirements.txt` -- install the CPU-only
-build first (a plain `pip install torch` pulls a multi-GB CUDA build you
-don't need for this MLP-sized policy; there's no GPU-bound work here, PySC2's
-game-stepping is the actual bottleneck):
+**PyTorch is deliberately not in `requirements.txt`** because the right
+build depends on the machine:
 
 ```powershell
+# CPU-only (no NVIDIA GPU, or a very old one) -- smaller download, this
+# MLP-sized policy doesn't benefit much from a GPU anyway (see "GPU vs CPU"
+# below), so this is the simplest default:
 pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+# NVIDIA GPU present (e.g. a GTX 10-series / RTX card): install the CUDA
+# build instead. Check `nvidia-smi` for your driver's max supported CUDA
+# version first, then pick a matching index from
+# https://pytorch.org/get-started/locally/ -- cu121 is a safe default for
+# most current drivers:
+pip install torch --index-url https://download.pytorch.org/whl/cu121
+```
+
+Then, on any machine:
+
+```powershell
 pip install -r requirements.txt
 pip install -e . --no-deps
 ```
 
+#### GPU vs CPU
+
+`sb3-contrib` auto-selects CUDA if `torch.cuda.is_available()` -- no config
+needed. That said, don't expect a big speedup here: the policy/value
+networks are tiny (2x64-unit MLPs over an 83-dim vector), so the actual
+matrix-multiply work is trivial either way. The real bottleneck is the
+StarCraft II client itself stepping the game forward each action -- a
+single-threaded, real-time-simulation cost that a GPU doesn't touch at all.
+A GPU mainly helps once/if the network grows much larger (e.g. a future CNN
+over spatial features) or once training is parallelized across many
+concurrent `SC2Env` instances.
+
 ### 4. StarCraft II itself
 
-Not installed on this machine yet (an install attempt errored and needs a
-system restart to retry -- ask Claude Code to help debug that when you get to
-it). Once it's installed:
+- Install it, then set `SC2PATH` if it's not in the default location PySC2
+  expects (`~/StarCraftII` on Linux; on Windows PySC2 auto-detects the
+  standard Battle.net install path, normally
+  `C:\Program Files (x86)\StarCraft II`).
+- Download the official map pack and extract `Simple64.SC2Map` (and friends)
+  into `<StarCraft II install>/Maps/` -- PySC2 does not fetch maps itself:
 
-- Set `SC2PATH` if StarCraft II isn't in the default location PySC2 expects
-  (`~/StarCraftII` on Linux; on Windows PySC2 auto-detects the standard
-  Battle.net install path).
-- Unzip the map pack containing `Simple64.SC2Map` into
-  `<StarCraft II install>/Maps/` -- PySC2 does not fetch maps itself.
+  ```powershell
+  # Password-protected; downloading/extracting it means you agree to
+  # Blizzard's AI and Machine Learning License.
+  Invoke-WebRequest -Uri "https://blzdistsc2-a.akamaihd.net/MapPacks/Melee.zip" -OutFile Melee.zip
+  Expand-Archive -Path Melee.zip -DestinationPath "C:\Program Files (x86)\StarCraft II\Maps" -Force
+  # (Expand-Archive doesn't support the zip's password -- use 7-Zip or
+  # `tar`/`unzip -P iagreetotheeula Melee.zip` from Git Bash instead if you
+  # hit a password prompt.)
+  ```
 
-## Status: what's verified here vs. what needs a live game
+## Status
 
-This repo was built without a StarCraft II install available. Everything in
-`src/sc2rl/env/` **except** `sc2_env_wrapper.py` (sector math, game-state
-parsing, observation featurization, action masking, action translation) is
-covered by `pytest` against fakes in `tests/fakes/fake_pysc2.py` -- run:
+Fully verified end-to-end against a live StarCraft II client, including
+several bugs that only surfaced once a real game was actually running (they
+were invisible against the test fakes, which had modeled the observation
+schema on assumption rather than the live one) -- see the git log for
+specifics: PySC2 needing `absl` flags parsed before use, `raw_units` having
+no `health_max` field (only `health` + `health_ratio`), a `protobuf` version
+conflict between `pysc2` and `tensorboard`, build actions silently resolving
+to no-ops because SCVs are never "idle" while auto-mining, and a
+supply-headroom masking heuristic that deadlocked the whole economy at game
+start. All fixed and covered by regression tests.
+
+`pytest` covers everything in `src/sc2rl/env/` except the live-client parts
+of `sc2_env_wrapper.py` against fakes/stubs (`tests/fakes/fake_pysc2.py`);
+`tests/test_env_wrapper.py` and `tests/test_training_smoke.py` exercise the
+full env -> Monitor -> DummyVecEnv -> MaskablePPO pipeline (including
+action-mask auto-detection) against a stubbed `SC2Env`, and
+`tests/test_training_resume.py` validates that `--resume-from` actually
+continues training (weights, optimizer state, and timestep counter) rather
+than restarting:
 
 ```powershell
 pytest
 ```
-
-`tests/test_env_wrapper.py` also exercises `SC2FightEnv`'s `step()`/`reset()`
-contract against a *stubbed* `SC2Env` (dependency-injected via the
-`env_factory` constructor argument), and `tests/test_training_smoke.py` runs
-a few real `MaskablePPO.learn()` steps against that same stub -- so the full
-env -> Monitor -> DummyVecEnv -> MaskablePPO wiring, including action-mask
-auto-detection, is validated end-to-end without a live client.
-
-**Not verified here** (needs the real game once installed): an actual
-`SC2Env` connection, a real training run's learning curve, and map/scenario
-behavior specific to `Simple64`.
 
 ## Training
 
@@ -121,19 +214,34 @@ behavior specific to `Simple64`.
 python -m sc2rl.training.train --config configs/default.yaml
 ```
 
-Run `configs/train_fast.yaml` first once StarCraft II is installed -- it's a
-short (2,000-timestep) config meant to confirm the training loop,
-checkpointing, and TensorBoard logging all work end-to-end before committing
-to a long run:
+Run `configs/train_fast.yaml` first if you haven't yet -- it's a short
+(2,000-timestep) config meant to confirm the training loop, checkpointing,
+and TensorBoard logging all work end-to-end before committing to a long run:
 
 ```powershell
 python -m sc2rl.training.train --config configs/train_fast.yaml
 tensorboard --logdir runs
 ```
 
+### Checkpoints and resuming
+
 Checkpoints land in `training.checkpoint_dir` (`checkpoints/` by default,
-`.gitignore`d) as `.zip` files, saved every `training.checkpoint_freq`
-timesteps plus a `final_model.zip` at the end.
+`.gitignore`d) as `.zip` files -- each one is a full snapshot: policy +
+value network weights, the optimizer's state, and the hyperparameters used
+to train it. One is saved every `training.checkpoint_freq` timesteps, plus a
+`final_model.zip` when a run completes normally.
+
+If a run gets interrupted (Ctrl-C, machine restart, corporate-policy
+whatever), resume from the latest checkpoint instead of starting over:
+
+```powershell
+python -m sc2rl.training.train --config configs/default.yaml --resume-from checkpoints/sc2rl_50000_steps.zip
+```
+
+This restores the weights/optimizer exactly and trains for another
+`training.ppo.total_timesteps` steps from wherever that checkpoint left off
+(not up to an absolute total -- see the docstring in `train.py` if you want
+the exact semantics).
 
 ## Running a trained agent
 
@@ -148,11 +256,10 @@ python -m sc2rl.inference.play --checkpoint checkpoints/final_model --episodes 5
 - Action space: `no_op`, `build_supply_depot`, `build_barracks`,
   `train_marine`, plus one `move_army_to_sector_i` per grid cell (default
   4x4 = 16 cells) -- 20 actions total.
-- Reward: PySC2's own terminal win/loss reward. Dense per-step reward shaping
-  (friendly/enemy army-value delta) exists but is **off by default** --
-  `env.reward.shaping_enabled` in config -- so the first real training run
-  validates against a clean sparse-reward baseline first.
-- Single environment (`DummyVecEnv` with one `SC2FightEnv`), CPU-only PyTorch.
-  StarCraft II's per-step client overhead is the real bottleneck, not GPU
-  compute or environment parallelism -- revisit `SubprocVecEnv` only if
-  training throughput turns out to matter once a real run is possible.
+- Reward: PySC2's own terminal win/loss reward, sparse-only by default (see
+  "How it works" above for the optional shaping term).
+- Single environment (`DummyVecEnv` with one `SC2FightEnv`). StarCraft II's
+  per-step client overhead is the real bottleneck, not neural-net compute or
+  environment parallelism -- revisit `SubprocVecEnv` (multiple concurrent
+  `SC2Env` instances) only if training throughput turns out to matter in
+  practice.
