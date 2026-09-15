@@ -7,13 +7,15 @@ env:
   build_cooldown_steps: 3
   max_game_loop_norm: 20000
   visualize: false
-  # 6x6 (36 sectors): cell size ~10.7x10.7, half-diagonal ~7.5 -- comfortably
-  # within a marine's sight range (~9), unlike the old 4x4's 16x16 cells
-  # (half-diagonal ~11.3, beyond sight range -- confirmed live as the cause
-  # of enemy buildings tucked in a cell corner going undetected). Going
-  # finer than this trades search thoroughness for search speed: more
-  # sectors means more visits needed to sweep the whole map within an
-  # episode's step budget (see scripted_policy.py's search_timeout_steps).
+  # The grid is laid over the map's PLAYABLE area (read from the game at
+  # reset), which on Simple64 is a ~43x43 square in the raw frame. 6x6 (36
+  # sectors) gives ~7.1x7.1 cells, half-diagonal ~5 -- comfortably within a
+  # marine's sight range (~9), so standing at a cell's center sees the whole
+  # cell (the old 4x4 over the full 64x64 square had 16x16 cells with a
+  # half-diagonal of ~11.3, beyond sight range -- confirmed live as the
+  # cause of enemy buildings tucked in a cell corner going undetected).
+  # Going finer trades search thoroughness for search speed: more sectors
+  # means more visits to sweep the whole map within an episode.
   grid:
     cols: 6
     rows: 6

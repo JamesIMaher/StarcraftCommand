@@ -79,14 +79,16 @@ explore-toward-the-enemy or return-to-defend behavior.
 
 **Action space.** A flat `Discrete(40)`: `no_op`, `build_supply_depot`,
 `build_barracks`, `train_marine`, plus one `move_army_to_sector_i` per grid
-cell (36 at the default 6x6 grid). Grid resolution is a real
-coverage/thoroughness tradeoff, not just a display detail: on a 64x64 map, a
-4x4 grid's 16x16 cells have a half-diagonal (~11.3) beyond a marine's sight
-range (~9) -- confirmed live as the cause of enemy buildings tucked in a
-cell corner going undetected during search-and-destroy (see
-`env/scripted_policy.py`). 6x6's ~10.7x10.7 cells (half-diagonal ~7.5) fit
-comfortably within sight range; going finer still improves coverage further
-but costs more sectors to sweep within an episode's step budget.
+cell (36 at the default 6x6 grid). The grid is laid over the map's
+*playable area* (see below), which on Simple64 is a ~43x43 square in the
+raw frame. Grid resolution is a real coverage/thoroughness tradeoff, not
+just a display detail: the original 4x4 grid over the full 64x64 square had
+16x16 cells with a half-diagonal (~11.3) beyond a marine's sight range (~9)
+-- confirmed live as the cause of enemy buildings tucked in a cell corner
+going undetected during search-and-destroy (see `env/scripted_policy.py`).
+6x6 over the playable area gives ~7.1x7.1 cells (half-diagonal ~5), so
+standing at a cell's center sees the whole cell; going finer still improves
+coverage further but costs more sectors to sweep within an episode.
 `action_masking.py` computes which actions are legal each step (afford
 checks, unit existence, per-type caps) -- illegal actions never get sampled
 at all rather than resolving to a silent no-op, because `MaskablePPO` zeroes
@@ -128,7 +130,20 @@ them by `raw_resolution / max(map width, height)` and flips the y axis
 so observations and actions agree with each other -- but `game_info`
 (map size, playable area) is in real world coordinates and must be pushed
 through the same transform before it can be compared to anything else.
-The env prints both frames once at reset (`[env] map world size ...`).
+
+**The grid is laid over the playable area, not the map square.** Simple64
+is actually 88x96 world units with a playable area of (12,12)-(76,76); in
+the raw frame that is `x 8.0..50.7, y 13.3..56.0` -- a ~43-unit square
+sitting off-center in the 64x64 square. A grid over the full square wasted
+the entire last column and first row on sectors nothing could ever reach,
+so their `explored` flag stayed 0 forever and the exploration/stale-search
+incentives kept pulling the army toward those edges (confirmed live as the
+army bunching at a map edge). At reset the env reads the playable area from
+`game_info`, converts it to the raw frame, and re-lays the sector grid
+over it (`SectorGrid.bounds`) -- the number of sectors, and so the action
+and observation space sizes, never change, only the geometry. Home-relative
+mirroring reflects about the playable area's center for the same reason.
+The env prints the bounds it used once (`[env] sector grid laid over ...`).
 
 **Neural network.** `MaskablePPO`'s default `MlpPolicy`
 (`sb3_contrib.common.maskable.policies.MaskableActorCriticPolicy`) is two

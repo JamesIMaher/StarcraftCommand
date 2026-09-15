@@ -30,8 +30,13 @@ _MOVE_VARIANCE = 0.75
 _HOME_SECTOR = 0  # canonical sector nearest home after SpawnOrientation mirroring
 
 
-# Keep clamped targets this far inside the playable-area boundary rather than
-# exactly on it, so the point is somewhere a unit can actually stand.
+# Keep clamped targets this far inside the grid's bounds (the playable area,
+# once the env knows it) rather than exactly on the boundary, so the point is
+# somewhere a unit can actually stand. A target outside the playable area is
+# unpathable -- an attack-move there never completes, and the whole army
+# parks at the nearest cliff edge forever. Confirmed live, twice: once in the
+# old repo and again here after edge-biased attack targets were introduced to
+# reach corner buildings on the coarser 4x4 grid.
 _PLAYABLE_MARGIN = 1.0
 
 
@@ -40,16 +45,6 @@ class ActionTranslator:
         self.spec = spec
         self._rng = rng or random.Random()
         self._barracks_cursor = 0
-        # (min_x, min_y, max_x, max_y) in world coordinates, from the game's
-        # own start_raw.playable_area. Set by the env once a game is running;
-        # None falls back to the full map_size square. The map's playable
-        # area is inset from its nominal size (Simple64's is well inside the
-        # 64x64 square), so a target at the literal map corner is unpathable
-        # -- an attack-move there never completes, and the whole army parks
-        # at the nearest cliff edge forever. Confirmed live, twice: once in
-        # the old repo and again here after edge-biased attack targets were
-        # introduced to reach corner buildings on the coarser 4x4 grid.
-        self.playable_area: tuple[float, float, float, float] | None = None
 
     def translate(self, action_index: int, state: GameState, orientation: SpawnOrientation) -> list:
         if action_index == FixedAction.NO_OP:
@@ -113,9 +108,10 @@ class ActionTranslator:
         if target is None:
             # sector_center() is in canonical (home-relative) space; convert
             # back to real map coordinates for the actual attack-move order.
-            # At the default 6x6 grid a cell's center already sees the whole
-            # cell (half-diagonal ~7.5 < marine sight ~9), so an empty
-            # sector's center is the right place to sweep to.
+            # At the default 6x6 grid over Simple64's playable area a cell's
+            # center already sees the whole cell (half-diagonal ~5 < marine
+            # sight ~9), so an empty sector's center is the right place to
+            # sweep to.
             target = orientation.to_world(*self.spec.grid.sector_center(sector))
         wx, wy = target
         calls = []
@@ -150,14 +146,10 @@ class ActionTranslator:
         return nearest.x, nearest.y
 
     def _clamp_to_playable(self, x: float, y: float) -> tuple[float, float]:
-        if self.playable_area is None:
-            min_x = min_y = 0.0
-            max_x = max_y = float(self.spec.grid.map_size)
-        else:
-            min_x, min_y, max_x, max_y = self.playable_area
+        grid = self.spec.grid
         return (
-            max(min_x + _PLAYABLE_MARGIN, min(max_x - _PLAYABLE_MARGIN, x)),
-            max(min_y + _PLAYABLE_MARGIN, min(max_y - _PLAYABLE_MARGIN, y)),
+            max(grid.min_x + _PLAYABLE_MARGIN, min(grid.max_x - _PLAYABLE_MARGIN, x)),
+            max(grid.min_y + _PLAYABLE_MARGIN, min(grid.max_y - _PLAYABLE_MARGIN, y)),
         )
 
     def _offset_point(self, x: float, y: float) -> tuple[float, float]:

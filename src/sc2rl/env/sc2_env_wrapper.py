@@ -141,7 +141,7 @@ class SC2FightEnv(gym.Env):
         super().reset(seed=seed)
         self._ensure_env()
         timesteps = self._sc2_env.reset()
-        self._translator.playable_area = self._read_playable_area()
+        self._apply_playable_area(self._read_playable_area())
         self._cooldowns[:] = 0
         self._state = GameState.from_observation(timesteps[0])
         self._orientation = self._compute_orientation(self._state)
@@ -173,11 +173,24 @@ class SC2FightEnv(gym.Env):
         self._newly_visited_this_step = present_this_step - self._visited_sectors
         self._visited_sectors |= self._newly_visited_this_step
 
+    def _apply_playable_area(self, bounds: tuple[float, float, float, float] | None) -> None:
+        """Lay the sector grid over the playable area (see SectorGrid.bounds
+        for why). The number of sectors -- and so the action/observation
+        space sizes -- never changes, only the geometry, so this is safe to
+        do once the game is up. No-op when nothing is known (stubbed env)."""
+        if bounds is None or bounds == self.grid.bounds:
+            return
+        print(f"[env] sector grid laid over playable area (raw frame) x {bounds[0]:.1f}..{bounds[2]:.1f}, "
+              f"y {bounds[1]:.1f}..{bounds[3]:.1f}")
+        self.grid = self.grid.with_bounds(bounds)
+        self.action_spec = ActionSpaceSpec(grid=self.grid)
+        self._translator.spec = self.action_spec
+
     def _read_playable_area(self) -> tuple[float, float, float, float] | None:
-        """The game's own start_raw.playable_area, via SC2Env.game_info --
-        see ActionTranslator.playable_area for why attack targets must stay
-        inside it. None (full-map fallback) when the underlying env doesn't
-        expose it, e.g. the stubbed env in tests.
+        """The game's own start_raw.playable_area, via SC2Env.game_info,
+        converted into the raw frame -- the rectangle the sector grid is laid
+        over and attack targets are clamped to. None (full-map fallback) when
+        the underlying env doesn't expose it, e.g. the stubbed env in tests.
 
         game_info is in world coordinates, but everything this env works in
         -- raw_units positions and the "world" argument of raw actions -- is
@@ -195,19 +208,12 @@ class SC2FightEnv(gym.Env):
         start_raw = game_info[0].start_raw
         area, world = start_raw.playable_area, start_raw.map_size
         scale = self.config.map_size / max(world.x, world.y)
-        raw = (
+        return (
             area.p0.x * scale,
             (world.y - area.p1.y) * scale,  # y flips, so p1.y becomes the minimum
             area.p1.x * scale,
             (world.y - area.p0.y) * scale,
         )
-        if self._translator.playable_area is None:
-            print(
-                f"[env] map world size {world.x}x{world.y}, playable area world "
-                f"({area.p0.x},{area.p0.y})-({area.p1.x},{area.p1.y}) -> raw frame "
-                f"x {raw[0]:.1f}..{raw[2]:.1f}, y {raw[1]:.1f}..{raw[3]:.1f}"
-            )
-        return raw
 
     def _sector_of(self, x: float, y: float) -> int:
         cx, cy = self._orientation.to_canonical(x, y)
@@ -218,8 +224,10 @@ class SC2FightEnv(gym.Env):
         if home is None:
             # Shouldn't happen at reset (you always start with a command
             # center), but fall back to an identity mapping rather than crash.
-            return SpawnOrientation(map_size=self.config.map_size, mirror_x=False, mirror_y=False)
-        return SpawnOrientation.from_home_position(self.config.map_size, *home)
+            return SpawnOrientation(
+                map_size=self.config.map_size, mirror_x=False, mirror_y=False, bounds=self.grid.bounds,
+            )
+        return SpawnOrientation.from_home_position(self.config.map_size, *home, bounds=self.grid.bounds)
 
     def step(self, action: int):
         if self._state is None:

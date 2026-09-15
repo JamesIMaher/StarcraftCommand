@@ -56,18 +56,27 @@ def test_reset_reads_playable_area_and_converts_it_to_the_raw_frame():
     env.reset()
 
     scale = 64 / 96
-    min_x, min_y, max_x, max_y = env._translator.playable_area
+    min_x, min_y, max_x, max_y = env.grid.bounds
     assert min_x == pytest.approx(10 * scale)
     assert max_x == pytest.approx(54 * scale)
     assert min_y == pytest.approx((96 - 52) * scale)  # y flipped: world p1.y is the raw minimum
     assert max_y == pytest.approx((96 - 12) * scale)
+    # The grid, the action spec, the translator and the orientation all see
+    # the same playable-area geometry; only the geometry changed, not sizes.
+    assert env.action_spec.grid is env.grid
+    assert env._translator.spec is env.action_spec
+    assert env.orientation.bounds == env.grid.bounds
+    assert env.observation_space.shape == env.reset()[0].shape
+    assert env.grid.sector_of(min_x + 0.1, min_y + 0.1) == 0
+    assert env.grid.sector_of(max_x - 0.1, max_y - 0.1) == env.grid.num_sectors - 1
 
 
 def test_reset_falls_back_to_full_map_when_game_info_unavailable():
     ts0 = fake.make_timestep(minerals=50, food_cap=15)
     env, _ = make_env([ts0])
     env.reset()
-    assert env._translator.playable_area is None
+    assert env.grid.bounds is None
+    assert env.grid.sector_of(63.9, 63.9) == env.grid.num_sectors - 1
 
 
 def test_reset_returns_correctly_shaped_observation():

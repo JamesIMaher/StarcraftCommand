@@ -1,3 +1,5 @@
+import pytest
+
 from sc2rl.env.sector_grid import SectorGrid, SpawnOrientation
 
 
@@ -36,6 +38,49 @@ def test_sector_of_clamps_out_of_bounds():
     grid = make_grid()
     assert grid.sector_of(-5, -5) == grid.sector_of(0, 0)
     assert grid.sector_of(999, 999) == grid.sector_of(63, 63)
+
+
+def test_grid_with_bounds_covers_only_the_playable_rectangle():
+    # Regression test: the grid used to be laid over the full nominal map
+    # square, but Simple64's playable area is a ~43-unit square sitting
+    # off-center in the 64x64 raw frame -- so the entire last column and
+    # first row were sectors nothing could ever reach, and the exploration
+    # incentives kept pulling the army toward those edges.
+    grid = SectorGrid(map_size=64, cols=4, rows=4, bounds=(8.0, 13.3, 50.7, 56.0))
+    assert grid.cell_width == (50.7 - 8.0) / 4
+    assert grid.cell_height == (56.0 - 13.3) / 4
+    assert grid.sector_center(0) == (8.0 + grid.cell_width / 2, 13.3 + grid.cell_height / 2)
+    assert grid.sector_of(8.1, 13.4) == 0
+    assert grid.sector_of(50.6, 55.9) == grid.num_sectors - 1
+    # Coordinates outside the bounds clamp to the nearest edge sector.
+    assert grid.sector_of(0.0, 0.0) == 0
+    assert grid.sector_of(63.9, 63.9) == grid.num_sectors - 1
+    for sector in range(grid.num_sectors):
+        cx, cy = grid.sector_center(sector)
+        assert grid.sector_of(cx, cy) == sector
+        assert 8.0 < cx < 50.7 and 13.3 < cy < 56.0
+
+
+def test_with_bounds_keeps_sector_count():
+    grid = SectorGrid(map_size=64, cols=6, rows=6).with_bounds((8.0, 13.3, 50.7, 56.0))
+    assert grid.num_sectors == 36
+    assert grid.bounds == (8.0, 13.3, 50.7, 56.0)
+
+
+def test_spawn_orientation_mirrors_about_the_bounds_center_not_the_map_center():
+    # The playable area is off-center in the raw frame, so reflecting about
+    # the map square's center mapped the two spawn corners onto different
+    # ground. Reflecting about the bounds' center makes them symmetric: the
+    # bounds' far corner lands exactly on its near corner.
+    bounds = (8.0, 13.3, 50.7, 56.0)
+    orientation = SpawnOrientation.from_home_position(64, home_x=45, home_y=50, bounds=bounds)
+    assert orientation.mirror_x and orientation.mirror_y
+    cx, cy = orientation.to_canonical(50.7, 56.0)
+    assert (cx, cy) == pytest.approx((8.0, 13.3))
+    # A home just past the map-square center but on the near side of the
+    # bounds' center is NOT mirrored.
+    near = SpawnOrientation.from_home_position(64, home_x=28, home_y=33, bounds=bounds)
+    assert not near.mirror_x and not near.mirror_y
 
 
 def test_friendly_quadrant_top_left():

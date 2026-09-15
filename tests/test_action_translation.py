@@ -154,17 +154,19 @@ def test_move_army_ignores_structures_outside_the_target_sector():
     assert abs(target_y - center_y) <= 1.0
 
 
-def test_move_army_targets_are_clamped_inside_the_playable_area():
-    # The game's playable area is smaller than the nominal map square; a
-    # target outside it (or right on its boundary) is unpathable. Once the
-    # env has read the playable area, every target must land strictly inside.
-    spec = make_spec()
+def test_move_army_targets_stay_strictly_inside_the_grid_bounds():
+    # With the grid laid over the playable area, sector centers are inside
+    # it by construction; jitter and a known structure's position could
+    # still land on/over the boundary, and a point on or past it is
+    # unpathable. Every target must land strictly inside.
+    grid = SectorGrid(map_size=64, cols=4, rows=4, bounds=(20.0, 20.0, 44.0, 44.0))
+    spec = ActionSpaceSpec(grid=grid)
     translator = ActionTranslator(spec, rng=random.Random(0))
-    translator.playable_area = (20.0, 20.0, 44.0, 44.0)
     state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
     state.marines.append(fake.marine(1, x=30, y=30))
+    state.enemies.append(fake.enemy_unit(10, fake.UNIT_HATCHERY, x=20.2, y=43.9))  # right at the edge
 
-    for sector in (0, spec.grid.num_sectors - 1):  # both corner sectors' centers lie outside the area
+    for sector in range(spec.grid.num_sectors):
         calls = translator.translate(spec.move_action_for_sector(sector), state, identity_orientation(spec))
         target_x, target_y = calls[0].arguments[2]
         assert 20.0 < target_x < 44.0
