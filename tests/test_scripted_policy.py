@@ -215,6 +215,26 @@ def test_regroups_at_home_when_below_attack_threshold_out_in_the_field():
     assert policy.action(heading_home, spec, masking, orientation) == FixedAction.NO_OP  # don't re-issue
 
 
+def test_mobilized_army_below_attack_threshold_keeps_pressing_the_known_enemy_base():
+    # Regression test: an army that launched at 20 and lost a few marines
+    # used to turn around and walk away from the enemy's last buildings.
+    spec = make_spec()
+    masking = MaskingConfig(min_marines_to_move=4, min_marines_to_advance=20, min_marines_to_continue=8)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.command_centers.append(fake.command_center(1, x=8, y=8))
+    for tag in range(12):
+        state.marines.append(fake.marine(tag, x=50, y=50, idle=True))  # deep in enemy territory
+    state.enemies.append(fake.enemy_unit(99, fake.UNIT_HATCHERY, x=58, y=58))  # last sector
+    policy = ScriptedPolicy(ScriptedPolicyConfig(target_supply_depots=0, target_barracks=0, attack_threshold=20))
+    action = policy.action(state, spec, masking, identity_orientation(spec), mobilized=True)
+    assert action == spec.move_action_for_sector(spec.grid.num_sectors - 1)
+
+    # Below the continue floor the mask closes and it regroups at home.
+    state.marines = state.marines[:6]
+    action = policy.action(state, spec, masking, identity_orientation(spec), mobilized=False)
+    assert action == spec.move_action_for_sector(0)
+
+
 def test_holds_at_home_when_below_attack_threshold_and_already_there():
     spec = make_spec()
     masking = MaskingConfig(min_marines_to_move=4, min_marines_to_advance=20)

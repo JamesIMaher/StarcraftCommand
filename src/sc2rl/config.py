@@ -46,6 +46,15 @@ class MaskConfig:
     # immediately, which then taught the policy to avoid moving altogether
     # rather than to wait for mass.
     min_marines_to_advance: int = 20
+    # Hysteresis on min_marines_to_advance. Once the army has reached the
+    # advance threshold (the env tracks this as "mobilized" for the rest of
+    # the episode), advancing stays legal down to this count. Without it,
+    # an army that launched at 20 and lost a few marines was forbidden from
+    # going anywhere but home -- observed live as the teacher walking away
+    # from the enemy's last two buildings and only winning because a couple
+    # of stragglers never got the recall. Mobilization ends when the count
+    # drops below this, and then a fresh 20 is needed to launch again.
+    min_marines_to_continue: int = 8
 
     @staticmethod
     def from_dict(data: dict) -> "MaskConfig":

@@ -73,10 +73,12 @@ class ScriptedPolicy:
         masking_config: MaskingConfig,
         orientation: SpawnOrientation,
         unreachable_sectors: Collection[int] = (),
+        mobilized: bool = False,
     ) -> int:
         home = home_sector(state.command_center_pos, spec.grid, orientation)
         mask = compute_action_masks(
             state, spec, masking_config, home_sector=home, unreachable_sectors=unreachable_sectors,
+            mobilized=mobilized,
         )
 
         if mask[FixedAction.BUILD_SUPPLY_DEPOT] and len(state.supply_depots) < self.config.target_supply_depots:
@@ -101,7 +103,17 @@ class ScriptedPolicy:
             self._clear_search_target()  # break off any in-progress search to defend
             return home_action
 
-        if len(state.marines) < self.config.attack_threshold:
+        # attack_threshold launches an offensive; once launched (the env's
+        # `mobilized`), the mask keeps advancing legal down to
+        # min_marines_to_continue, and the teacher keeps pressing as long as
+        # the mask allows it. Regrouping at home only when the mask no
+        # longer lets the army go anywhere else -- otherwise an army that
+        # launched at 20 and lost a few marines turned around and walked
+        # away from the enemy's last buildings (observed live).
+        offensive_allowed = any(
+            mask[spec.move_action_for_sector(s)] for s in range(spec.grid.num_sectors) if s != home
+        )
+        if len(state.marines) < self.config.attack_threshold and not (mobilized and offensive_allowed):
             return self._regroup_at_home(state, spec, mask, home, base_sectors, orientation)
 
         return self._search_and_destroy(state, spec, mask, enemy_sectors)

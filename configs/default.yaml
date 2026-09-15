@@ -6,7 +6,7 @@ env:
   step_mul: 8
   build_cooldown_steps: 3
   max_game_loop_norm: 20000
-  visualize: false
+  visualize: true
   # One-time ASCII dump of the pathing grid / units / sector targets at the
   # first reset -- see EnvConfig.pathing_debug_path.
   pathing_debug_path: pathing_debug.txt
@@ -33,6 +33,9 @@ env:
     # scripted_policy.py's ScriptedPolicyConfig.attack_threshold. See the
     # comment on MaskConfig.min_marines_to_advance in config.py.
     min_marines_to_advance: 20
+    # Once mobilized, keep advancing down to this many marines before
+    # regrouping -- see MaskConfig.min_marines_to_continue in config.py.
+    min_marines_to_continue: 8
   reward:
     shaping_enabled: true
     shaping_coefficient: 0.001

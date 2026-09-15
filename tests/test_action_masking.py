@@ -133,6 +133,24 @@ def test_home_sector_for_the_low_move_threshold_follows_the_command_center():
     assert not mask[spec.move_action_for_sector(0)]
 
 
+def test_mobilized_army_keeps_advancing_down_to_the_continue_threshold():
+    # Hysteresis: 12 marines can't LAUNCH an offensive (advance floor 20),
+    # but an army that already launched keeps advancing at 12, and only
+    # loses that once it falls below the continue floor (8).
+    spec = make_spec()
+    config = MaskingConfig(min_marines_to_move=4, min_marines_to_advance=20, min_marines_to_continue=8)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    for tag in range(12):
+        state.marines.append(fake.marine(tag))
+    far = spec.move_action_for_sector(spec.grid.num_sectors - 1)
+    assert not compute_action_masks(state, spec, config, mobilized=False)[far]
+    assert compute_action_masks(state, spec, config, mobilized=True)[far]
+
+    state.marines = state.marines[:7]
+    assert not compute_action_masks(state, spec, config, mobilized=True)[far]
+    assert compute_action_masks(state, spec, config, mobilized=True)[spec.move_action_for_sector(0)]  # home
+
+
 def test_unreachable_sectors_are_never_legal_move_targets():
     spec = make_spec()
     config = MaskingConfig(min_marines_to_move=4, min_marines_to_advance=4)

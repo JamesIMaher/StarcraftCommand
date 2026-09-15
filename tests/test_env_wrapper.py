@@ -567,6 +567,31 @@ def test_pathing_debug_map_is_written_once_when_configured(tmp_path):
     assert rows[5][5] == "."
 
 
+def test_env_tracks_mobilization_with_hysteresis_across_steps():
+    def army(n):
+        return [fake.marine(i, x=30, y=30) for i in range(n)]
+
+    timesteps = [
+        fake.make_timestep(units=army(12), minerals=0, food_cap=15),  # reset: never reached 20
+        fake.make_timestep(units=army(20), minerals=0, food_cap=15),  # mobilized
+        fake.make_timestep(units=army(12), minerals=0, food_cap=15),  # losses, still mobilized
+        fake.make_timestep(units=army(7), minerals=0, food_cap=15),  # below continue floor
+        fake.make_timestep(units=army(12), minerals=0, food_cap=15),  # back to 12: needs a fresh 20
+    ]
+    config = EnvConfig()
+    config.masking.min_marines_to_advance = 20
+    config.masking.min_marines_to_continue = 8
+    env, _ = make_env(timesteps, config)
+    env.reset()
+    far = env.action_spec.move_action_for_sector(env.grid.num_sectors - 1)
+    assert not env.mobilized and not env.action_masks()[far]
+    expectations = [True, True, False, False]
+    for expected in expectations:
+        env.step(FixedAction.NO_OP)
+        assert env.mobilized is expected
+        assert bool(env.action_masks()[far]) == expected
+
+
 def test_scouting_bonus_awarded_once_per_newly_seen_enemy_sector():
     ts0 = fake.make_timestep(minerals=0, food_cap=15)  # no enemies visible yet
     ts1 = fake.make_timestep(units=[fake.enemy_unit(1, fake.UNIT_MARINE, x=56, y=56)], minerals=0, food_cap=15)

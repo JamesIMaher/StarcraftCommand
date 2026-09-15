@@ -524,12 +524,18 @@ build a small base, keep training marines, defend home if any sector with
 one of our buildings is under attack and undefended, and -- once mobilized
 to a real attack force (`ScriptedPolicyConfig.attack_threshold`, default 20
 marines, matching `masking.min_marines_to_advance`) -- commit to a
-**search-and-destroy** pattern. Below the threshold it holds at the base;
-if the army is already out in the field when it drops below (it advanced
-at full strength and took losses), it regroups at the command center
-rather than holding mid-map -- holding there meant getting picked off while
-reinforcements piled up at home, observed live as the army parked at the
-map's center for a very long time. The pattern itself (over legal targets
+**search-and-destroy** pattern. Below the threshold it holds at the base.
+Once launched, the offensive has hysteresis: the env remembers the army
+reached `masking.min_marines_to_advance` ("mobilized"), the movement mask
+then keeps advancing legal down to `masking.min_marines_to_continue`
+(default 8), and the teacher keeps pressing as long as the mask allows.
+Without that, an army that launched at 20 and lost a few marines was
+forbidden from going anywhere but home and walked away from the enemy's
+last two buildings (observed live -- that game was only won because a
+couple of stragglers never got the recall). Only when the mask closes does
+it regroup at the command center, rather than holding mid-map -- holding
+there meant getting picked off while reinforcements piled up at home,
+observed live as the army parked at the map's center for a very long time. The pattern itself (over legal targets
 only -- sectors with no pathable ground are never picked): sweep sectors
 farthest-from-home first, redirecting immediately to any sector where the
 enemy is actually spotted. A new order only fires once the majority of
@@ -609,7 +615,8 @@ All under `env:` in `configs/default.yaml`:
 | Key | Default | What it does |
 |---|---|---|
 | `masking.min_marines_to_move` | `4` | Movement to the HOME sector illegal below this many marines |
-| `masking.min_marines_to_advance` | `20` | Movement to any OTHER sector illegal below this many marines |
+| `masking.min_marines_to_advance` | `20` | Movement to any OTHER sector illegal below this many marines (to launch an offensive) |
+| `masking.min_marines_to_continue` | `8` | Once launched ("mobilized"), advancing stays legal down to this many -- hysteresis |
 | `reward.shaping_enabled` | `true` | Master on/off switch for everything below |
 | `reward.shaping_coefficient` | `0.001` | Scales the army-value and kill-value shaping terms |
 | `reward.economic_value_cap` | `4000.0` | Ceiling on economic value used for the reward -- prevents indefinite hoarding |

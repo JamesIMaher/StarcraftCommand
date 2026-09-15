@@ -40,6 +40,16 @@ class MaskingConfig:
     # early with too few marines and dying immediately, which then taught
     # the policy to avoid moving at all rather than to wait for mass.
     min_marines_to_advance: int = 20
+    # Hysteresis: once mobilized (the env tracks reaching
+    # min_marines_to_advance), advancing stays legal down to this count --
+    # see MaskConfig.min_marines_to_continue in config.py.
+    min_marines_to_continue: int = 8
+
+
+def can_advance(marine_count: int, config: MaskingConfig, mobilized: bool) -> bool:
+    if marine_count >= config.min_marines_to_advance:
+        return True
+    return mobilized and marine_count >= config.min_marines_to_continue
 
 
 def compute_action_masks(
@@ -48,13 +58,17 @@ def compute_action_masks(
     config: MaskingConfig,
     home_sector: int = 0,
     unreachable_sectors: Collection[int] = (),
+    mobilized: bool = False,
 ) -> np.ndarray:
     """`home_sector` is the sector the command center is in (see
     sector_grid.home_sector) -- the one move target that only needs
     min_marines_to_move rather than min_marines_to_advance.
     `unreachable_sectors` (no pathable ground at all -- see pathing.py) are
     never legal move targets: there is nothing there to reach, and an order
-    to go there just parks the army at the nearest cliff edge."""
+    to go there just parks the army at the nearest cliff edge.
+    `mobilized` is the env's episode memory that the army already reached
+    min_marines_to_advance once, which lowers the bar to
+    min_marines_to_continue (see can_advance)."""
     mask = np.zeros(spec.num_actions, dtype=bool)
     mask[FixedAction.NO_OP] = True
 
@@ -89,10 +103,10 @@ def compute_action_masks(
     mask[FixedAction.TRAIN_MARINE] = can_train_marine
 
     can_move = len(state.marines) >= config.min_marines_to_move
-    can_advance = len(state.marines) >= config.min_marines_to_advance
+    advance = can_advance(len(state.marines), config, mobilized)
     unreachable = set(unreachable_sectors)
     for sector in range(spec.grid.num_sectors):
-        legal = can_move if sector == home_sector else can_advance
+        legal = can_move if sector == home_sector else advance
         mask[spec.move_action_for_sector(sector)] = legal and sector not in unreachable
 
     return mask

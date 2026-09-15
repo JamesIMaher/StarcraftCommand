@@ -25,7 +25,7 @@ from pysc2.lib import actions as sc2_actions
 from pysc2.lib import features
 
 from ..config import EnvConfig
-from .action_masking import MaskingConfig, compute_action_masks
+from .action_masking import MaskingConfig, can_advance, compute_action_masks
 
 # pysc2's run_configs module reads absl flags (e.g. --sc2_run_config) and
 # raises if they were never parsed. Our CLI entrypoints use argparse, not
@@ -100,7 +100,9 @@ class SC2FightEnv(gym.Env):
             marine_minerals=config.masking.marine_minerals,
             min_marines_to_move=config.masking.min_marines_to_move,
             min_marines_to_advance=config.masking.min_marines_to_advance,
+            min_marines_to_continue=config.masking.min_marines_to_continue,
         )
+        self._mobilized = False
         self._translator = ActionTranslator(self.action_spec)
         self._sc2_env = None
         self._state: GameState | None = None
@@ -143,6 +145,21 @@ class SC2FightEnv(gym.Env):
         return self._orientation
 
     @property
+    def mobilized(self) -> bool:
+        """Episode memory: the army has reached masking.min_marines_to_advance
+        at some point and hasn't since fallen below min_marines_to_continue
+        -- the hysteresis input to the movement mask. Public so the
+        demonstration collector can hand it to the scripted teacher."""
+        return self._mobilized
+
+    def _update_mobilized(self) -> None:
+        count = len(self._state.marines)
+        if count >= self.masking_config.min_marines_to_advance:
+            self._mobilized = True
+        elif count < self.masking_config.min_marines_to_continue:
+            self._mobilized = False
+
+    @property
     def unreachable_sectors(self) -> frozenset[int]:
         """Sectors with no pathable ground this episode (see pathing.py) --
         never legal move targets. Public so the demonstration collector can
@@ -160,6 +177,8 @@ class SC2FightEnv(gym.Env):
         self._apply_playable_area(self._read_playable_area())
         self._cooldowns[:] = 0
         self._state = GameState.from_observation(timesteps[0])
+        self._mobilized = False
+        self._update_mobilized()
         self._orientation = self._compute_orientation(self._state)
         self._pathing = self._raw_pathing = self._read_pathing(timesteps[0])
         if self._pathing is not None and self._state.command_center_pos is not None:
@@ -398,6 +417,7 @@ class SC2FightEnv(gym.Env):
         ts = timesteps[0]
 
         self._state = GameState.from_observation(ts)
+        self._update_mobilized()
         self._tick_cooldowns(action)
         self._record_visited_sectors()
 
@@ -413,6 +433,7 @@ class SC2FightEnv(gym.Env):
         hard_mask = compute_action_masks(
             self._state, self.action_spec, self.masking_config,
             home_sector=self._home_sector(), unreachable_sectors=self._unreachable_sectors,
+            mobilized=self._mobilized,
         )
         cooldown_mask = self._cooldowns <= 0
         mask = hard_mask & cooldown_mask
@@ -582,8 +603,8 @@ class SC2FightEnv(gym.Env):
             self._steps_since_new_sector = 0
             return 0.0
         self._steps_since_new_sector += 1
-        if len(self._state.marines) < self.config.masking.min_marines_to_advance:
-            # Not yet allowed to leave home, so holding position is the only
+        if not can_advance(len(self._state.marines), self.masking_config, self._mobilized):
+            # Not allowed to leave home, so holding position is the only
             # legal (and correct) thing to do. This used to gate on the lower
             # min_marines_to_move, which made marines 4..19 a penalty stream
             # the policy had no legal way to stop -- observed live as it
