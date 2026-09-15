@@ -43,6 +43,11 @@ class ActionTranslator:
         self.spec = spec
         self._rng = rng or random.Random()
         self._barracks_cursor = 0
+        # Per-sector pathable target in world coordinates (None for a sector
+        # with no pathable ground), computed by the env from the game's
+        # pathing layer once a game is running -- see pathing.py. None here
+        # means "unknown": fall back to sector centers.
+        self.sector_targets: list[tuple[float, float] | None] | None = None
 
     def translate(self, action_index: int, state: GameState, orientation: SpawnOrientation) -> list:
         if action_index == FixedAction.NO_OP:
@@ -104,6 +109,8 @@ class ActionTranslator:
             # command center, not at the cell's midpoint (which, with the old
             # full-map grid, was the corner cliff behind the base).
             target = cc
+        if target is None and self.sector_targets is not None:
+            target = self.sector_targets[sector]  # pathable point nearest the center, already world coords
         if target is None:
             # sector_center() is in canonical (home-relative) space; convert
             # back to real map coordinates for the actual attack-move order.

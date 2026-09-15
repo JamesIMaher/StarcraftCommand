@@ -42,7 +42,9 @@ def collect(config: Config, episodes: int, env_factory=None) -> tuple[np.ndarray
                 # log_prob blow up (confirmed: this exact mismatch produced
                 # a loss of ~1.25 million on the first real dataset).
                 mask = env.action_masks()
-                action = policy.action(env.state, env.action_spec, env.masking_config, env.orientation)
+                action = policy.action(
+                    env.state, env.action_spec, env.masking_config, env.orientation, env.unreachable_sectors,
+                )
                 if not mask[action]:
                     action = int(FixedAction.NO_OP)
                 observations.append(obs)

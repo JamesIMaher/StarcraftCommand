@@ -9,6 +9,7 @@ class's step()/reset() contract against a stubbed SC2Env instead of a real one.
 
 from __future__ import annotations
 
+import math
 import sys
 
 # NOTE: PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION is set in sc2rl/__init__.py,
@@ -37,6 +38,7 @@ from .action_space import ActionSpaceSpec, FixedAction
 from .action_translation import ActionTranslator
 from .game_state import GameState
 from .observation import featurize, observation_length
+from .pathing import PathingMap
 from .sector_grid import SectorGrid, SpawnOrientation, home_sector, sectors_of
 
 _RACE_MAP = {
@@ -111,6 +113,14 @@ class SC2FightEnv(gym.Env):
         self._steps_since_new_sector = 0
         self._home_defense_total = 0.0
         self._stale_search_total = 0.0
+        self._time_total = 0.0
+        self._prev_approach_potential: float | None = None
+        self._prev_known_structure_tags: frozenset[int] = frozenset()
+        self._approach_pos_total = 0.0
+        self._approach_neg_total = 0.0
+        self._pathing: PathingMap | None = None
+        self._unreachable_sectors: set[int] = set()
+        self._reported_unreachable = False
         self._last_reward_breakdown: dict[str, float] = {}
         self._orientation = SpawnOrientation(map_size=config.map_size, mirror_x=False, mirror_y=False)
 
@@ -131,6 +141,13 @@ class SC2FightEnv(gym.Env):
         SpawnOrientation. Public for the same reason as `state` above."""
         return self._orientation
 
+    @property
+    def unreachable_sectors(self) -> frozenset[int]:
+        """Sectors with no pathable ground this episode (see pathing.py) --
+        never legal move targets. Public so the demonstration collector can
+        hand them to the scripted teacher, which computes its own mask."""
+        return frozenset(self._unreachable_sectors)
+
     def _ensure_env(self):
         if self._sc2_env is None:
             self._sc2_env = self._env_factory(self.config)
@@ -143,18 +160,66 @@ class SC2FightEnv(gym.Env):
         self._cooldowns[:] = 0
         self._state = GameState.from_observation(timesteps[0])
         self._orientation = self._compute_orientation(self._state)
+        self._pathing = self._read_pathing(timesteps[0])
+        self._compute_sector_targets()
         self._prev_total_value = self._state.total_value_units + self._state.total_value_structures
         self._prev_kill_value = self._state.killed_value_units + self._state.killed_value_structures
         self._seen_enemy_sectors = set()
         # The base's sectors count as already "visited" at spawn -- marines
         # start there, so they shouldn't pay an exploration bonus (or read as
         # unexplored in the observation) the first time they're checked.
-        self._visited_sectors = set(self._base_sectors())
+        # Unreachable sectors likewise: there is nothing there to explore,
+        # and leaving them "unexplored" would have the exploration/stale
+        # incentives pulling the army toward ground it can never stand on.
+        self._visited_sectors = set(self._base_sectors()) | set(self._unreachable_sectors)
         self._newly_visited_this_step: set[int] = set()
         self._steps_since_new_sector = 0
         self._home_defense_total = 0.0
         self._stale_search_total = 0.0
+        self._time_total = 0.0
+        self._prev_approach_potential = None
+        self._prev_known_structure_tags = frozenset()
+        self._approach_pos_total = 0.0
+        self._approach_neg_total = 0.0
         return self._featurize(), {}
+
+    @staticmethod
+    def _read_pathing(ts) -> PathingMap | None:
+        """The minimap `pathable` layer, which at minimap size == raw_resolution
+        is in exactly the raw frame unit positions use. None when the
+        observation has no feature layers (stubbed env): everything pathable."""
+        feature_minimap = getattr(ts.observation, "feature_minimap", None)
+        if feature_minimap is None:
+            return None
+        return PathingMap(np.asarray(feature_minimap[features.MINIMAP_FEATURES.pathable.index]) > 0)
+
+    def _compute_sector_targets(self) -> None:
+        """Per-sector attack target = the pathable point nearest the sector's
+        center (world coords), and the set of sectors with no pathable
+        ground at all. Recomputed every reset because the orientation (which
+        world rectangle each canonical sector covers) changes with the spawn
+        corner."""
+        self._unreachable_sectors = set()
+        if self._pathing is None:
+            self._translator.sector_targets = None
+            return
+        grid, orientation = self.grid, self._orientation
+        targets: list[tuple[float, float] | None] = []
+        for sector in range(grid.num_sectors):
+            col, row = grid.sector_coords(sector)
+            cx0, cy0 = grid.min_x + col * grid.cell_width, grid.min_y + row * grid.cell_height
+            (ax, ay), (bx, by) = orientation.to_world(cx0, cy0), orientation.to_world(
+                cx0 + grid.cell_width, cy0 + grid.cell_height,
+            )
+            rect = (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
+            target = self._pathing.nearest_pathable(*orientation.to_world(*grid.sector_center(sector)), rect)
+            targets.append(target)
+            if target is None:
+                self._unreachable_sectors.add(sector)
+        self._translator.sector_targets = targets
+        if self._unreachable_sectors and not self._reported_unreachable:
+            print(f"[env] sectors with no pathable ground (never move targets): {sorted(self._unreachable_sectors)}")
+            self._reported_unreachable = True
 
     def _featurize(self) -> np.ndarray:
         return featurize(
@@ -263,7 +328,8 @@ class SC2FightEnv(gym.Env):
         if self._state is None:
             return np.zeros(self.action_spec.num_actions, dtype=bool)
         hard_mask = compute_action_masks(
-            self._state, self.action_spec, self.masking_config, home_sector=self._home_sector(),
+            self._state, self.action_spec, self.masking_config,
+            home_sector=self._home_sector(), unreachable_sectors=self._unreachable_sectors,
         )
         cooldown_mask = self._cooldowns <= 0
         mask = hard_mask & cooldown_mask
@@ -291,12 +357,16 @@ class SC2FightEnv(gym.Env):
         reward_scouting = 0.0
         reward_exploration = 0.0
         reward_stale_search = 0.0
+        reward_time = 0.0
+        reward_approach = 0.0
         if self.config.reward.shaping_enabled:
             reward_economic, reward_kill = self._combat_shaping_reward()
             reward_home_defense = self._home_defense_penalty()
             reward_scouting = self._scouting_bonus()
             reward_exploration = self._exploration_bonus()
             reward_stale_search = self._stale_search_penalty(made_progress=bool(self._newly_visited_this_step))
+            reward_time = self._time_penalty()
+            reward_approach = self._approach_reward()
 
         self._last_reward_breakdown = {
             "reward_terminal": reward_terminal,
@@ -306,11 +376,10 @@ class SC2FightEnv(gym.Env):
             "reward_scouting": reward_scouting,
             "reward_exploration": reward_exploration,
             "reward_stale_search": reward_stale_search,
+            "reward_time": reward_time,
+            "reward_approach": reward_approach,
         }
-        return (
-            reward_terminal + reward_economic + reward_kill + reward_home_defense
-            + reward_scouting + reward_exploration + reward_stale_search
-        )
+        return sum(self._last_reward_breakdown.values())
 
     def _combat_shaping_reward(self) -> tuple[float, float]:
         """Returns (economic_reward, kill_reward) separately -- see
@@ -444,6 +513,49 @@ class SC2FightEnv(gym.Env):
         penalty = min(cfg.stale_search_penalty, cfg.stale_search_penalty_cap - self._stale_search_total)
         self._stale_search_total += penalty
         return -penalty
+
+    def _time_penalty(self) -> float:
+        """See RewardConfig.time_penalty_per_step: time costs something, so
+        finishing sooner is worth more. Capped per episode."""
+        cfg = self.config.reward
+        remaining = cfg.time_penalty_cap - self._time_total
+        if remaining <= 0:
+            return 0.0
+        penalty = min(cfg.time_penalty_per_step, remaining)
+        self._time_total += penalty
+        return -penalty
+
+    def _approach_reward(self) -> float:
+        """See RewardConfig.approach_reward_scale: potential-based reward for
+        closing distance between the army's centroid and the nearest known
+        enemy structure. No reward on a step where the set of known
+        structures changed (discovery or kill), so destroying a building is
+        never charged as "the nearest one just got farther away"."""
+        cfg = self.config.reward
+        structures, marines = self._state.enemy_structures, self._state.marines
+        tags = frozenset(u.tag for u in structures)
+        potential = None
+        if structures and marines:
+            army_x = sum(m.x for m in marines) / len(marines)
+            army_y = sum(m.y for m in marines) / len(marines)
+            distance = min(math.hypot(u.x - army_x, u.y - army_y) for u in structures)
+            diagonal = math.hypot(self.grid.max_x - self.grid.min_x, self.grid.max_y - self.grid.min_y)
+            potential = -cfg.approach_reward_scale * distance / max(diagonal, 1e-6)
+
+        reward = 0.0
+        comparable = potential is not None and self._prev_approach_potential is not None
+        if comparable and tags == self._prev_known_structure_tags:
+            delta = potential - self._prev_approach_potential
+            if delta > 0:
+                delta = min(delta, max(cfg.approach_reward_cap - self._approach_pos_total, 0.0))
+                self._approach_pos_total += delta
+            elif delta < 0:
+                delta = max(delta, -max(cfg.approach_reward_cap - self._approach_neg_total, 0.0))
+                self._approach_neg_total -= delta
+            reward = delta
+        self._prev_approach_potential = potential
+        self._prev_known_structure_tags = tags
+        return reward
 
     def close(self):
         if self._sc2_env is not None:

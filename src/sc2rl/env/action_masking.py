@@ -8,6 +8,7 @@ keeping this function fully unit-testable in isolation).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Collection
 
 import numpy as np
 
@@ -42,11 +43,18 @@ class MaskingConfig:
 
 
 def compute_action_masks(
-    state: GameState, spec: ActionSpaceSpec, config: MaskingConfig, home_sector: int = 0
+    state: GameState,
+    spec: ActionSpaceSpec,
+    config: MaskingConfig,
+    home_sector: int = 0,
+    unreachable_sectors: Collection[int] = (),
 ) -> np.ndarray:
     """`home_sector` is the sector the command center is in (see
     sector_grid.home_sector) -- the one move target that only needs
-    min_marines_to_move rather than min_marines_to_advance."""
+    min_marines_to_move rather than min_marines_to_advance.
+    `unreachable_sectors` (no pathable ground at all -- see pathing.py) are
+    never legal move targets: there is nothing there to reach, and an order
+    to go there just parks the army at the nearest cliff edge."""
     mask = np.zeros(spec.num_actions, dtype=bool)
     mask[FixedAction.NO_OP] = True
 
@@ -82,8 +90,9 @@ def compute_action_masks(
 
     can_move = len(state.marines) >= config.min_marines_to_move
     can_advance = len(state.marines) >= config.min_marines_to_advance
+    unreachable = set(unreachable_sectors)
     for sector in range(spec.grid.num_sectors):
         legal = can_move if sector == home_sector else can_advance
-        mask[spec.move_action_for_sector(sector)] = legal
+        mask[spec.move_action_for_sector(sector)] = legal and sector not in unreachable
 
     return mask

@@ -29,9 +29,17 @@ class StubSC2Env:
         pass
 
 
-def make_env(timesteps, config: EnvConfig | None = None) -> tuple[SC2FightEnv, StubSC2Env]:
+def make_env(
+    timesteps, config: EnvConfig | None = None, keep_time_penalty: bool = False
+) -> tuple[SC2FightEnv, StubSC2Env]:
+    config = config or EnvConfig()
+    if not keep_time_penalty:
+        # The flat per-step time penalty applies from step one whenever
+        # shaping is on; it has its own test, and zeroing it here keeps every
+        # other component's test exact instead of off by 0.001 per step.
+        config.reward.time_penalty_per_step = 0.0
     stub = StubSC2Env(timesteps)
-    env = SC2FightEnv(config or EnvConfig(), env_factory=lambda cfg: stub)
+    env = SC2FightEnv(config, env_factory=lambda cfg: stub)
     return env, stub
 
 
@@ -430,6 +438,100 @@ def test_base_sectors_start_explored_and_recall_mask_follows_the_command_center(
     assert not mask[env.action_spec.move_action_for_sector(0)]
 
 
+def test_time_penalty_applies_every_step_and_is_capped():
+    ts = fake.make_timestep(minerals=0, food_cap=15)
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.time_penalty_per_step = 0.5
+    config.reward.time_penalty_cap = 1.2
+    env, _ = make_env([ts] * 5, config, keep_time_penalty=True)
+    env.reset()
+    rewards = [env.step(FixedAction.NO_OP)[1] for _ in range(4)]
+    assert rewards == pytest.approx([-0.5, -0.5, -0.2, 0.0])
+
+
+def _approach_config() -> EnvConfig:
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.scouting_bonus = 0.0
+    config.reward.exploration_bonus = 0.0
+    config.reward.approach_reward_scale = 2.0
+    config.reward.approach_reward_cap = 3.0
+    return config
+
+
+def test_approach_reward_pays_for_closing_distance_to_a_known_enemy_structure():
+    hatchery = fake.enemy_unit(9, fake.UNIT_HATCHERY, x=60, y=60)
+    ts0 = fake.make_timestep(units=[fake.marine(1, x=10, y=10)], minerals=0, food_cap=15)
+    ts1 = fake.make_timestep(units=[fake.marine(1, x=10, y=10), hatchery], minerals=0, food_cap=15)
+    ts2 = fake.make_timestep(units=[fake.marine(1, x=20, y=20), hatchery], minerals=0, food_cap=15)
+    ts3 = fake.make_timestep(units=[fake.marine(1, x=15, y=15), hatchery], minerals=0, food_cap=15)
+    env, _ = make_env([ts0, ts1, ts2, ts3], _approach_config())
+    env.reset()
+
+    _, r1, _, _, _ = env.step(FixedAction.NO_OP)  # structure just discovered: baseline only
+    assert r1 == 0.0
+    _, r2, _, _, info2 = env.step(FixedAction.NO_OP)  # closed in
+    diagonal = 64 * 2 ** 0.5
+    expected = 2.0 * ((50 * 2 ** 0.5) - (40 * 2 ** 0.5)) / diagonal
+    assert info2["reward_approach"] == pytest.approx(expected)
+    assert r2 == pytest.approx(expected)
+    _, r3, _, _, _ = env.step(FixedAction.NO_OP)  # backed off: symmetric charge
+    assert r3 == pytest.approx(-expected / 2)
+
+
+def test_approach_reward_is_silent_on_the_step_the_known_structure_set_changes():
+    # Killing the last building of a base makes the "nearest structure"
+    # jump to a farther one -- that must not read as backing away.
+    near = fake.enemy_unit(9, fake.UNIT_HATCHERY, x=30, y=30)
+    far = fake.enemy_unit(10, fake.UNIT_HATCHERY, x=60, y=60)
+    ts0 = fake.make_timestep(units=[fake.marine(1, x=28, y=28)], minerals=0, food_cap=15)
+    ts1 = fake.make_timestep(units=[fake.marine(1, x=28, y=28), near, far], minerals=0, food_cap=15)
+    ts2 = fake.make_timestep(units=[fake.marine(1, x=29, y=29), near, far], minerals=0, food_cap=15)
+    ts3 = fake.make_timestep(units=[fake.marine(1, x=30, y=30), far], minerals=0, food_cap=15)  # near killed
+    env, _ = make_env([ts0, ts1, ts2, ts3], _approach_config())
+    env.reset()
+    env.step(FixedAction.NO_OP)
+    _, r2, _, _, _ = env.step(FixedAction.NO_OP)
+    assert r2 > 0.0
+    _, r3, _, _, info3 = env.step(FixedAction.NO_OP)
+    assert info3["reward_approach"] == 0.0
+
+
+def test_unreachable_sectors_are_masked_pre_explored_and_targets_are_pathable():
+    import numpy as np
+
+    from sc2rl.env.observation import FEATURES_PER_SECTOR, observation_length
+
+    # 4x4 grid over a 64 map: 16-unit cells. Sector 15 (x,y in 48..64) has no
+    # pathable ground at all; sector 0 is pathable only in a strip x < 4.
+    pathable = np.ones((64, 64), dtype=bool)
+    pathable[48:64, 48:64] = False
+    pathable[0:16, 4:16] = False
+    marines = [fake.marine(i, x=30, y=30) for i in range(25)]
+    ts0 = fake.make_timestep(units=marines, minerals=0, food_cap=15, pathable=pathable)
+    config = EnvConfig()
+    config.grid.cols = config.grid.rows = 4
+    config.masking.min_marines_to_advance = 20
+    env, _ = make_env([ts0, ts0], config)
+    obs, _ = env.reset()
+
+    assert env.unreachable_sectors == frozenset({15})
+    mask = env.action_masks()
+    assert not mask[env.action_spec.move_action_for_sector(15)]
+    assert mask[env.action_spec.move_action_for_sector(14)]
+    global_len = observation_length(env.grid) - FEATURES_PER_SECTOR * env.grid.num_sectors
+    assert obs[global_len + FEATURES_PER_SECTOR * 15 + 5] == 1.0  # nothing there to explore
+    assert obs[global_len + FEATURES_PER_SECTOR * 14 + 5] == 0.0
+
+    targets = env._translator.sector_targets
+    assert targets[15] is None
+    assert targets[0] == (3.5, 7.5)  # nearest pathable cell to the (8, 8) center, inside the strip
+    # Fully pathable sector: a cell within one unit of its own (24, 24) center
+    # (which sits on a cell corner, so several cells tie at equal distance).
+    assert abs(targets[5][0] - 24) <= 1.0 and abs(targets[5][1] - 24) <= 1.0
+
+
 def test_scouting_bonus_awarded_once_per_newly_seen_enemy_sector():
     ts0 = fake.make_timestep(minerals=0, food_cap=15)  # no enemies visible yet
     ts1 = fake.make_timestep(units=[fake.enemy_unit(1, fake.UNIT_MARINE, x=56, y=56)], minerals=0, food_cap=15)
@@ -626,7 +728,7 @@ def test_step_info_exposes_per_component_reward_breakdown():
     assert info["reward_economic"] == 50.0
     assert set(info.keys()) == {
         "reward_terminal", "reward_economic", "reward_kill", "reward_home_defense",
-        "reward_scouting", "reward_exploration", "reward_stale_search",
+        "reward_scouting", "reward_exploration", "reward_stale_search", "reward_time", "reward_approach",
     }
     assert reward == sum(info.values())
 
@@ -690,7 +792,7 @@ def test_win_reward_stays_positive_despite_a_long_troubled_episode():
         units=marines, minerals=0, food_cap=15, reward=1.0, step_type="LAST", total_value_units=0,
     )
     timesteps = [reset_step] + [bad_step] * 100 + [win_step]
-    env, _ = make_env(timesteps, config)
+    env, _ = make_env(timesteps, config, keep_time_penalty=True)
     env.reset()
 
     total = 0.0

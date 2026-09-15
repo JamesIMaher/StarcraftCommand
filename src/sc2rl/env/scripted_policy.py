@@ -16,6 +16,7 @@ the way AlphaStar's full-interface action space did.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Collection
 
 from .action_masking import MaskingConfig, compute_action_masks
 from .action_space import ActionSpaceSpec, FixedAction
@@ -71,9 +72,12 @@ class ScriptedPolicy:
         spec: ActionSpaceSpec,
         masking_config: MaskingConfig,
         orientation: SpawnOrientation,
+        unreachable_sectors: Collection[int] = (),
     ) -> int:
         home = home_sector(state.command_center_pos, spec.grid, orientation)
-        mask = compute_action_masks(state, spec, masking_config, home_sector=home)
+        mask = compute_action_masks(
+            state, spec, masking_config, home_sector=home, unreachable_sectors=unreachable_sectors,
+        )
 
         if mask[FixedAction.BUILD_SUPPLY_DEPOT] and len(state.supply_depots) < self.config.target_supply_depots:
             return int(FixedAction.BUILD_SUPPLY_DEPOT)
@@ -148,10 +152,17 @@ class ScriptedPolicy:
         if self._current_search_target is not None:
             self._cleared_sectors.add(self._current_search_target)
 
-        candidates = [s for s in range(spec.grid.num_sectors) if s not in self._cleared_sectors]
+        # Only sectors the mask allows: an unreachable sector (no pathable
+        # ground) is never legal, and picking one anyway meant the collector
+        # substituted no_op for the illegal order every step -- the army
+        # just sat there for the rest of the game.
+        legal = [s for s in range(spec.grid.num_sectors) if mask[spec.move_action_for_sector(s)]]
+        candidates = [s for s in legal if s not in self._cleared_sectors]
         if not candidates:
             self._cleared_sectors.clear()  # searched everywhere and found nothing -- start over
-            candidates = list(range(spec.grid.num_sectors))
+            candidates = legal
+        if not candidates:
+            return int(FixedAction.NO_OP)
         # Farthest-from-home first: home-adjacent sectors are already
         # covered by the defense check above, and the enemy is more likely
         # to be found away from our own base.

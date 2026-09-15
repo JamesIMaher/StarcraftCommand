@@ -133,6 +133,18 @@ def test_home_sector_for_the_low_move_threshold_follows_the_command_center():
     assert not mask[spec.move_action_for_sector(0)]
 
 
+def test_unreachable_sectors_are_never_legal_move_targets():
+    spec = make_spec()
+    config = MaskingConfig(min_marines_to_move=4, min_marines_to_advance=4)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    for tag in range(4):
+        state.marines.append(fake.marine(tag))
+    mask = compute_action_masks(state, spec, config, unreachable_sectors={3, 15})
+    assert not mask[spec.move_action_for_sector(3)]
+    assert not mask[spec.move_action_for_sector(15)]
+    assert mask[spec.move_action_for_sector(14)]
+
+
 def test_barracks_and_supply_depot_caps_respected():
     spec = make_spec()
     config = MaskingConfig(max_barracks=1, max_supply_depots=1)

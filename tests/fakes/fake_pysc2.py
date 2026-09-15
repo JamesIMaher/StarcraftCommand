@@ -74,6 +74,11 @@ class FakeObservation:
     player: FakePlayer = field(default_factory=FakePlayer)
     game_loop: list = field(default_factory=lambda: [0])
     score_cumulative: list = field(default_factory=lambda: [0] * _SCORE_CUMULATIVE_LEN)
+    # Real timesteps expose feature_minimap indexable by layer index; only the
+    # `pathable` layer is modeled, keyed by pysc2's own index for it. None
+    # (the default) mimics an observation without feature layers, which
+    # makes the env fall back to "everything is pathable".
+    feature_minimap: object = None
 
 
 @dataclass
@@ -101,18 +106,25 @@ def make_timestep(
     total_value_structures: int = 0,
     killed_value_units: int = 0,
     killed_value_structures: int = 0,
+    pathable=None,
 ) -> FakeTimeStep:
     score = [0] * _SCORE_CUMULATIVE_LEN
     score[3] = total_value_units
     score[4] = total_value_structures
     score[5] = killed_value_units
     score[6] = killed_value_structures
+    feature_minimap = None
+    if pathable is not None:
+        from pysc2.lib import features
+
+        feature_minimap = {features.MINIMAP_FEATURES.pathable.index: pathable}
     return FakeTimeStep(
         observation=FakeObservation(
             raw_units=units or [],
             player=FakePlayer(minerals=minerals, food_used=food_used, food_cap=food_cap),
             game_loop=[game_loop],
             score_cumulative=score,
+            feature_minimap=feature_minimap,
         ),
         reward=reward,
         step_type=step_type,

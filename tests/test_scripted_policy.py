@@ -226,6 +226,22 @@ def test_holds_at_home_when_below_attack_threshold_and_already_there():
     assert policy.action(state, spec, masking, identity_orientation(spec)) == FixedAction.NO_OP
 
 
+def test_search_skips_unreachable_sectors():
+    # Regression test: the sweep picked the farthest sector regardless of
+    # legality, so an unreachable far corner made it emit an illegal order
+    # every step (which the collector turned into no_op) -- the army sat
+    # there for the rest of the game.
+    spec = make_spec()
+    masking = MaskingConfig(min_marines_to_move=4)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    for tag in range(20):
+        state.marines.append(fake.marine(tag, x=1, y=1))
+    policy = ScriptedPolicy(ScriptedPolicyConfig(target_supply_depots=0, target_barracks=0, attack_threshold=20))
+    far = spec.grid.num_sectors - 1
+    action = policy.action(state, spec, masking, identity_orientation(spec), unreachable_sectors={far, far - 1})
+    assert action == spec.move_action_for_sector(far - 2)
+
+
 def test_no_op_when_nothing_legal():
     spec = make_spec()
     masking = MaskingConfig()

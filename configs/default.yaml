@@ -45,18 +45,26 @@ env:
     home_defense_penalty_cap: 1.0
     scouting_bonus: 0.02
     # Counterweight to home_defense_penalty's unbounded per-step drag -- see
-    # the comment on RewardConfig.exploration_bonus in config.py.
-    exploration_bonus: 0.02
+    # the comment on RewardConfig.exploration_bonus in config.py. Raised
+    # from 0.02 after the policy settled into staying home with 20+ marines.
+    exploration_bonus: 0.1
     # Further counterweight to the army stalling once assembled -- see the
     # comment on RewardConfig.stale_search_penalty in config.py.
-    stale_search_penalty: 0.01
-    stale_search_patience: 30
-    stale_search_penalty_cap: 0.5
+    stale_search_penalty: 0.02
+    stale_search_patience: 20
+    stale_search_penalty_cap: 2.0
+    # Time costs something: finishing sooner beats finishing later at all.
+    time_penalty_per_step: 0.001
+    time_penalty_cap: 2.0
+    # Closing distance to a known enemy building pays continuously -- see
+    # the comment on RewardConfig.approach_reward_scale in config.py.
+    approach_reward_scale: 2.0
+    approach_reward_cap: 3.0
     # Deliberately dominant -- see the comment on RewardConfig.terminal_reward_scale
     # in config.py: with the caps above, worst-case shaping per episode is
-    # ~+-5.6, so 10x (+-10) guarantees a win's total is always positive and a
-    # loss's is always negative.
-    terminal_reward_scale: 10.0
+    # ~+11.5 / -12, so 20x (+-20) guarantees a win's total is always positive
+    # and a loss's is always negative.
+    terminal_reward_scale: 20.0
 
 training:
   checkpoint_dir: checkpoints

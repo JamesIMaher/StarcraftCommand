@@ -121,11 +121,19 @@ every sector with one of our buildings in it -- with ~7-unit cells the base
 straddles several, and a hard-coded sector 0 silently missed attacks on the
 barracks next door (confirmed live as the scripted teacher never returning
 to defend, and losing most games, right after the grid was laid over the
-playable area). Otherwise it's the sector's
-center, which at 6x6 already sees the whole cell. Every target is clamped
-strictly inside the game's own `playable_area` (read from
-`SC2Env.game_info` at reset), because the playable area is inset from the
-nominal 64x64 square: an earlier version biased edge-sector targets all the
+playable area). Otherwise it's the *pathable* point
+nearest the sector's center, taken from the minimap `pathable` feature
+layer (`env/pathing.py`), which at minimap size == raw resolution is in the
+exact frame unit positions use. The playable rectangle still contains
+unpathable terrain -- cliffs, and on Simple64 the two corners that aren't
+bases -- and a sector center on a cliff sent the army to park at the
+cliff's edge (confirmed live as marines "trying to reach areas off the
+screen"). A sector with no pathable ground at all is removed from the
+action space for the episode (`SC2FightEnv.unreachable_sectors`, printed
+once at reset) and pre-marked explored so no exploration incentive points
+at it. Every target is also clamped strictly inside the game's own
+`playable_area` (read from `SC2Env.game_info` at reset), because the
+playable area is inset from the nominal 64x64 square: an earlier version biased edge-sector targets all the
 way to the literal map corner to reach corner buildings on the old 4x4
 grid, and since that point is unpathable the attack-move never completed
 -- the whole army would park at the corner cliff for the rest of the game.
@@ -237,9 +245,13 @@ and per-sector unit presence -- rather than invented heuristics:
 - **Scouting bonus** (OODA loop -- Observe): a one-time reward the first
   time an enemy unit is seen in a given sector during an episode, rewarding
   exploration itself rather than only its downstream combat consequences.
-- **Exploration bonus**: a one-time reward the first time a friendly marine
-  is present in a given sector during an episode (the home sector counts as
-  already visited at spawn), independent of whether an enemy is there. This
+- **Exploration bonus** (default `0.1`): a one-time reward the first time
+  a friendly marine is present in a given sector during an episode (the
+  base's sectors count as already visited at spawn, and so do sectors with
+  no pathable ground), independent of whether an enemy is there. Raised
+  from 0.02 after the policy settled into staying home with 20+ marines: at
+  0.02 a new sector was worth less than half of one marine (+0.05), so
+  exploring could never compete with sitting still. This
   exists specifically as a counterweight to the home-defense penalty: that
   penalty fires every step the home sector is undefended, for as long as
   that holds, with no cap, while scouting_bonus only pays once per sector
@@ -252,27 +264,45 @@ and per-sector unit presence -- rather than invented heuristics:
   problem -- exploration_bonus is *also* only one-time per sector, so once
   the army has visited what it's going to visit for a while, nothing keeps
   actively pulling it onward. This is a flat per-step penalty
-  (`stale_search_penalty`, default `0.01`) once the army has gone
-  `stale_search_patience` (default `30`) steps without entering a sector it
+  (`stale_search_penalty`, default `0.02`) once the army has gone
+  `stale_search_patience` (default `20`) steps without entering a sector it
   hasn't been in before -- applied only once movement is actually legal, so
   the early economy-building phase (correctly sitting at home) is never
   penalized. Observed live as a large, fully-mobilized army parking in one
   sector indefinitely -- "a huge pile of marines in one location." Also
-  capped per episode (`stale_search_penalty_cap`, default `0.5`), same
+  capped per episode (`stale_search_penalty_cap`, default `2.0`), same
   unbounded-episode-length reasoning as the home-defense penalty above.
+- **Time penalty** (`time_penalty_per_step`, default `0.001`, capped at
+  `time_penalty_cap` `2.0` per episode): a flat cost per step from the
+  first step, so finishing sooner is worth more than finishing later at all
+  -- the only pressure in the reward that says "get on with it" once the
+  economy is built and the army is safe at home.
+- **Approach reward** (`approach_reward_scale`, default `2.0`): the
+  step-to-step change in a potential
+  `-scale * distance(army centroid, nearest known enemy structure) / grid diagonal`,
+  so closing distance to a known enemy building pays continuously and
+  backing away costs the same -- "go attack the base" is rewarded step by
+  step instead of only at the terminal win hundreds of steps later, which
+  `gamma` discounts to almost nothing. Potential-based, so it sums to at
+  most `scale` across the whole map; the positive and negative totals are
+  each capped per episode at `approach_reward_cap` (`3.0`). The step on
+  which the set of known structures changes (a discovery or a kill) earns
+  nothing, otherwise destroying the last building of a base would be
+  charged as "the nearest structure just got farther away."
 
 Even with every component capped, their *sum* can still reach a few points
 of reward regardless of outcome -- capping bounds each channel, but only the
 terminal term actually guarantees a win's total stays positive and a loss's
-stays negative. So `reward.terminal_reward_scale` (default `10.0`) is
+stays negative. So `reward.terminal_reward_scale` (default `20.0`) is
 deliberately set well above 1: with the current caps, worst-case POSITIVE
 shaping per episode is roughly `shaping_coefficient * (economic_value_cap +
 kill_value_scale * kill_value_cap) + (scouting_bonus + exploration_bonus) *
-num_sectors` ~= 5.6, and worst-case NEGATIVE shaping is roughly
-`-(shaping_coefficient * economic_value_cap + home_defense_penalty_cap +
-stale_search_penalty_cap)` ~= -5.5 (economic value has no further downside
-once it's dropped to zero; killed value never decreases, so it has no
-negative side at all). 10x here (+-10) comfortably dominates both
+num_sectors + approach_reward_cap` ~= 11.5, and worst-case NEGATIVE shaping
+is roughly `-(shaping_coefficient * economic_value_cap +
+home_defense_penalty_cap + stale_search_penalty_cap + time_penalty_cap +
+approach_reward_cap)` ~= -12 (economic value has no further downside once
+it's dropped to zero; killed value never decreases, so it has no negative
+side at all). 20x here (+-20) comfortably dominates both
 directions with margin, regardless of how long an episode runs or how much
 shaping it racks up either way. This is tested directly against the actual
 shipped defaults
@@ -300,6 +330,7 @@ src/sc2rl/
   env/
     sc2_env_wrapper.py     gymnasium.Env wrapping pysc2 -- the only file that touches a live client
     sector_grid.py         grid/sector math shared by the action space and observation
+    pathing.py             pathable attack targets from the game's minimap pathable layer
     game_state.py           per-step snapshot parsed from raw_units/player
     observation.py          GameState -> feature vector
     action_space.py         named Discrete(N) action registry
@@ -476,7 +507,8 @@ if the army is already out in the field when it drops below (it advanced
 at full strength and took losses), it regroups at the command center
 rather than holding mid-map -- holding there meant getting picked off while
 reinforcements piled up at home, observed live as the army parked at the
-map's center for a very long time. The pattern itself: sweep sectors
+map's center for a very long time. The pattern itself (over legal targets
+only -- sectors with no pathable ground are never picked): sweep sectors
 farthest-from-home first, redirecting immediately to any sector where the
 enemy is actually spotted. A new order only fires once the majority of
 marines are idle (`UnitInfo.is_idle` -- no active order, so neither
@@ -549,11 +581,15 @@ All under `env:` in `configs/default.yaml`:
 | `reward.home_defense_penalty` | `0.05` | Per-step penalty while home is undefended and under attack |
 | `reward.home_defense_penalty_cap` | `1.0` | Ceiling on total home_defense_penalty accumulated within one episode |
 | `reward.scouting_bonus` | `0.02` | One-time reward per newly-sighted enemy sector per episode |
-| `reward.exploration_bonus` | `0.02` | One-time reward per sector a marine newly enters per episode -- counterweight to home_defense_penalty |
-| `reward.stale_search_penalty` | `0.01` | Per-step penalty once the army stalls without reaching a new sector too long |
-| `reward.stale_search_patience` | `30` | Steps of no new-sector progress tolerated before stale_search_penalty kicks in |
-| `reward.stale_search_penalty_cap` | `0.5` | Ceiling on total stale_search_penalty accumulated within one episode |
-| `reward.terminal_reward_scale` | `10.0` | Multiplies PySC2's own terminal win/loss reward -- deliberately dominant, see "How it works" |
+| `reward.exploration_bonus` | `0.1` | One-time reward per sector a marine newly enters per episode -- counterweight to home_defense_penalty |
+| `reward.stale_search_penalty` | `0.02` | Per-step penalty once the army stalls without reaching a new sector too long |
+| `reward.stale_search_patience` | `20` | Steps of no new-sector progress tolerated before stale_search_penalty kicks in |
+| `reward.stale_search_penalty_cap` | `2.0` | Ceiling on total stale_search_penalty accumulated within one episode |
+| `reward.time_penalty_per_step` | `0.001` | Flat per-step cost from step one -- finishing sooner is worth more |
+| `reward.time_penalty_cap` | `2.0` | Ceiling on total time penalty within one episode |
+| `reward.approach_reward_scale` | `2.0` | Potential-based reward for closing distance to the nearest known enemy structure |
+| `reward.approach_reward_cap` | `3.0` | Ceiling on the positive and (separately) negative approach totals within one episode |
+| `reward.terminal_reward_scale` | `20.0` | Multiplies PySC2's own terminal win/loss reward -- deliberately dominant, see "How it works" |
 
 `SC2FightEnv.step()` also returns each component separately in its `info`
 dict (`reward_terminal`, `reward_economic`, `reward_kill`,
@@ -564,7 +600,7 @@ training run by default) accumulates these per episode and prints a line to
 the console the moment each episode ends, e.g.:
 
 ```
-[episode end] total=-9.650  terminal=-10.000 economic=+0.320 kill=+0.004 home_defense=-0.150 scouting=+0.020 exploration=+0.040 stale_search=-0.010
+[episode end] total=-20.104  terminal=-20.000 economic=+0.320 kill=+0.004 home_defense=-0.150 scouting=+0.020 exploration=+0.200 stale_search=-0.040 time=-0.850 approach=+0.392
 ```
 
 It also logs each component to TensorBoard under `reward_breakdown/*`. This

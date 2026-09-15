@@ -23,6 +23,8 @@ _REWARD_COMPONENTS = (
     "reward_scouting",
     "reward_exploration",
     "reward_stale_search",
+    "reward_time",
+    "reward_approach",
 )
 
 

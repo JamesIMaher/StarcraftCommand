@@ -131,7 +131,12 @@ class RewardConfig:
     # an episode (excluding the home sector, already "visited" at spawn),
     # independent of whether an enemy is there -- so covering new ground
     # itself has an ongoing payoff, not just finding something in it.
-    exploration_bonus: float = 0.02
+    # Raised from 0.02 after the policy settled into a "stay home with 20+
+    # marines" local minimum: at 0.02 a new sector was worth less than half
+    # of one marine (+0.05 economic), so exploring could never compete with
+    # sitting still. 36 sectors x 0.1 = 3.6 is real money against the
+    # economic terms without rivaling the terminal reward.
+    exploration_bonus: float = 0.1
     # Further counterweight to the same stalling problem exploration_bonus
     # addresses: that bonus is one-time per sector, so once the army has
     # visited what it's going to visit for a while, there is still nothing
@@ -145,11 +150,33 @@ class RewardConfig:
     # advance threshold, not the lower min_marines_to_move: gating on the
     # latter penalized marines 4..19 every step with no legal way to stop
     # it, and the policy learned to build a few marines and then no more.
-    stale_search_penalty: float = 0.01
-    stale_search_patience: int = 30
+    stale_search_penalty: float = 0.02
+    stale_search_patience: int = 20
     # Same unbounded-episode-length reasoning as home_defense_penalty_cap --
     # total stale_search penalty within a single episode is clamped to this.
-    stale_search_penalty_cap: float = 0.5
+    stale_search_penalty_cap: float = 2.0
+    # Time costs something: a flat per-step penalty from the first step, so
+    # finishing the game sooner is worth more than finishing it later at all
+    # -- the only pressure in the reward that says "get on with it" once the
+    # economy is built and the army is safe at home. Capped per episode like
+    # every other per-step term (2000 steps' worth at the defaults).
+    time_penalty_per_step: float = 0.001
+    time_penalty_cap: float = 2.0
+    # Approach reward: the change, step to step, in a potential
+    #   -approach_reward_scale * (distance from the army's centroid to the
+    #   nearest KNOWN enemy structure) / (grid diagonal)
+    # so closing distance to a known enemy building pays continuously and
+    # backing away costs the same -- "go attack the base" is rewarded step
+    # by step instead of only at the terminal win hundreds of steps later
+    # (which gamma discounts to almost nothing). Potential-based, so it sums
+    # to at most approach_reward_scale across the whole map. The step on
+    # which the set of known structures changes (a discovery or a kill)
+    # earns nothing, otherwise destroying the last building of a base would
+    # be charged as "the nearest structure just got farther away."
+    # approach_reward_cap bounds the positive and negative totals per
+    # episode separately, for the usual unbounded-episode-length reason.
+    approach_reward_scale: float = 2.0
+    approach_reward_cap: float = 3.0
     # Multiplies PySC2's own terminal win/loss reward (+-1). Set well above
     # 1.0 deliberately: even with economic_value_cap and kill_value_cap in
     # place, a fully-built economy plus a long fight can still sum to a few
@@ -160,16 +187,17 @@ class RewardConfig:
     # current caps, worst-case POSITIVE shaping per episode is roughly
     # shaping_coefficient * (economic_value_cap + kill_value_scale *
     # kill_value_cap) + (scouting_bonus + exploration_bonus) * num_sectors
-    # =~ 0.001 * (4000 + 0.1 * 2000) + 0.04 * 36 =~ 5.6, and worst-case
-    # NEGATIVE shaping is roughly -(shaping_coefficient * economic_value_cap
-    # + home_defense_penalty_cap + stale_search_penalty_cap) =~ -(4.0 + 1.0 +
-    # 0.5) = -5.5 (economic_value_cap covers the worst case of the delta
-    # collapsing from the cap to zero; kill_value never decreases so it has
-    # no negative side). 10x here (+-10) comfortably dominates both
+    # + approach_reward_cap =~ 0.001 * (4000 + 0.1 * 2000) + 0.12 * 36 + 3
+    # =~ 11.5, and worst-case NEGATIVE shaping is roughly
+    # -(shaping_coefficient * economic_value_cap + home_defense_penalty_cap
+    # + stale_search_penalty_cap + time_penalty_cap + approach_reward_cap)
+    # =~ -(4 + 1 + 2 + 2 + 3) = -12 (economic_value_cap covers the worst
+    # case of the delta collapsing from the cap to zero; kill_value never
+    # decreases so it has no negative side). 20x here (+-20) dominates both
     # directions with margin, so a win's total reward is always positive and
     # a loss's is always negative, regardless of how much shaping either
     # episode racked up.
-    terminal_reward_scale: float = 10.0
+    terminal_reward_scale: float = 20.0
 
     @staticmethod
     def from_dict(data: dict) -> "RewardConfig":
