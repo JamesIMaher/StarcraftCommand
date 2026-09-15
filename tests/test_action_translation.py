@@ -22,7 +22,7 @@ def test_no_op_translates_to_raw_no_op():
     assert calls[0].function == sc2_actions.RAW_FUNCTIONS.no_op.id
 
 
-def test_build_supply_depot_targets_an_idle_scv():
+def test_build_supply_depot_targets_an_scv():
     spec = make_spec()
     translator = ActionTranslator(spec, rng=random.Random(0))
     state = GameState(game_loop=0, minerals=200, food_used=0, food_cap=15)
@@ -34,7 +34,22 @@ def test_build_supply_depot_targets_an_idle_scv():
     assert 42 in calls[0].arguments[1]
 
 
-def test_build_supply_depot_no_op_when_no_idle_scv():
+def test_build_supply_depot_uses_actively_mining_scv_not_just_idle_ones():
+    # Regression test: a live game's starting SCVs are continuously
+    # re-issuing harvest orders (order_length != 0), so they are never
+    # "idle" in that sense -- but a build order interrupts mining just fine,
+    # and requiring an idle worker meant build actions silently resolved to
+    # no-ops for the entire game in practice.
+    spec = make_spec()
+    translator = ActionTranslator(spec, rng=random.Random(0))
+    state = GameState(game_loop=0, minerals=200, food_used=0, food_cap=15)
+    state.scvs.append(fake.scv(42, x=10, y=10, idle=False))
+    calls = translator.translate(FixedAction.BUILD_SUPPLY_DEPOT, state)
+    assert calls[0].function == sc2_actions.RAW_FUNCTIONS.Build_SupplyDepot_pt.id
+    assert 42 in calls[0].arguments[1]
+
+
+def test_build_supply_depot_no_op_when_no_scv_at_all():
     spec = make_spec()
     translator = ActionTranslator(spec, rng=random.Random(0))
     state = GameState(game_loop=0, minerals=200, food_used=0, food_cap=15)

@@ -43,21 +43,24 @@ class ActionTranslator:
     def translate_named(self, action_name: str, state: GameState) -> list:
         return self.translate(self.spec.index_for_name(action_name), state)
 
-    def _pick_idle_scv(self, state: GameState) -> UnitInfo | None:
-        idle = state.idle_scvs
-        if not idle:
+    def _pick_scv(self, state: GameState) -> UnitInfo | None:
+        # Deliberately not filtered to idle_scvs: a build order interrupts
+        # whatever a worker is doing (mining included), so requiring an idle
+        # one -- order_length == 0 -- means almost never finding a candidate,
+        # since an auto-mining SCV has a continuously active harvest order.
+        if not state.scvs:
             return None
-        return self._rng.choice(idle)
+        return self._rng.choice(state.scvs)
 
     def _build_supply_depot(self, state: GameState) -> list:
-        scv = self._pick_idle_scv(state)
+        scv = self._pick_scv(state)
         if scv is None:
             return [sc2_actions.RAW_FUNCTIONS.no_op()]
         target = self._offset_point(scv.x, scv.y)
         return [sc2_actions.RAW_FUNCTIONS.Build_SupplyDepot_pt("now", scv.tag, target)]
 
     def _build_barracks(self, state: GameState) -> list:
-        scv = self._pick_idle_scv(state)
+        scv = self._pick_scv(state)
         if scv is None:
             return [sc2_actions.RAW_FUNCTIONS.no_op()]
         target = self._offset_point(scv.x, scv.y)
