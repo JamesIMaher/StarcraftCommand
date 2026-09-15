@@ -96,8 +96,12 @@ through, plus optional dense per-step shaping (`env.reward.shaping_enabled`,
 on by default) built from real PySC2 signals -- `obs.observation.score_cumulative`
 and per-sector unit presence -- rather than invented heuristics:
 
-- **Army value delta** (`total_value_units`, uncapped): rises as you train
-  and keep marines, falls when they die. Always fully rewarded/penalized.
+- **Economic value delta** (`total_value_units` + `total_value_structures`,
+  uncapped): rises as you train marines *and* as you complete supply
+  depots/barracks, falls when units die. Always fully rewarded/penalized.
+  Including structures matters -- without it, building a barracks earned no
+  immediate reward (only its eventual marines did), which showed up in
+  practice as the policy learning to delay barracks construction.
 - **Kill value, scaled by Concentration of Force**: `killed_value_units` +
   `killed_value_structures` delta, multiplied by
   `min(1, marine_count / concentration_threshold)`. A kill landed with a
