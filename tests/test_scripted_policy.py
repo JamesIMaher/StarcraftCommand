@@ -107,6 +107,30 @@ def test_moves_to_next_sector_after_arriving_at_current_target_and_finding_nothi
     assert second_action != spec.move_action_for_sector(far_sector)  # moved on to search elsewhere
 
 
+def test_gives_up_on_an_unreachable_target_after_timeout():
+    # Regression test: a target sector near unpathable terrain (cliffs,
+    # water) can be approached but never technically "arrived" at -- without
+    # a timeout, the search would stall on it forever instead of covering
+    # the rest of the map.
+    spec = make_spec()
+    masking = MaskingConfig(min_marines_to_move=4)
+    policy = ScriptedPolicy(ScriptedPolicyConfig(
+        target_supply_depots=0, target_barracks=0, attack_threshold=20, search_timeout_steps=3,
+    ))
+    orientation = identity_orientation(spec)
+    far_sector = spec.grid.num_sectors - 1
+
+    # Marines never actually reach the target sector (stuck short of it,
+    # simulating unreachable terrain) across every step below the timeout.
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    for tag in range(20):
+        state.marines.append(fake.marine(tag, x=1, y=1))
+
+    for _ in range(6):
+        action = policy.action(state, spec, masking, orientation)
+    assert action != spec.move_action_for_sector(far_sector)  # gave up and moved on after the timeout
+
+
 def test_breaks_off_search_to_defend_home_under_threat():
     spec = make_spec()
     masking = MaskingConfig(min_marines_to_move=4)

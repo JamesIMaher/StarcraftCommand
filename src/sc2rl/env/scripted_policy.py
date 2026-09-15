@@ -36,6 +36,14 @@ class ScriptedPolicyConfig:
     # this, movement stays legal (e.g. for home defense) but the teacher
     # deliberately holds position rather than advancing piecemeal.
     attack_threshold: int = 20
+    # Give up on confirming "arrival" at the current search target after
+    # this many steps and move on regardless. Maps often have irregular
+    # playable terrain (cliffs, water) that doesn't perfectly fill our
+    # coordinate grid, so a sector near the coordinate-space edge can
+    # correspond to partially unreachable terrain -- without this, the
+    # search can stall forever on a sector the army approaches but never
+    # technically enters.
+    search_timeout_steps: int = 25
 
 
 class ScriptedPolicy:
@@ -49,10 +57,12 @@ class ScriptedPolicy:
         self.config = config or ScriptedPolicyConfig()
         self._cleared_sectors: set[int] = set()
         self._current_search_target: int | None = None
+        self._search_target_steps = 0
 
     def reset(self) -> None:
         self._cleared_sectors = set()
         self._current_search_target = None
+        self._search_target_steps = 0
 
     def action(
         self,
@@ -77,7 +87,7 @@ class ScriptedPolicy:
         home_action = spec.move_action_for_sector(_HOME_SECTOR)
         enemy_sectors = _sectors_of(state.enemies, spec, orientation)
         if mask[home_action] and _HOME_SECTOR in enemy_sectors:
-            self._current_search_target = None  # break off any in-progress search to defend
+            self._clear_search_target()  # break off any in-progress search to defend
             return home_action
 
         if len(state.marines) < self.config.attack_threshold:
@@ -93,17 +103,22 @@ class ScriptedPolicy:
         for sector in sorted(enemy_sectors, reverse=True):
             action = spec.move_action_for_sector(sector)
             if mask[action]:
-                self._current_search_target = None
+                self._clear_search_target()
                 return action
 
-        # No enemy currently visible -- keep searching. If the army has
-        # actually arrived at the current search target with nothing found,
-        # mark it cleared and pick the next one.
+        # No enemy currently visible -- keep searching. Mark the current
+        # target cleared once either the army actually arrives there with
+        # nothing found, OR search_timeout_steps elapses without confirmed
+        # arrival (handles targets in terrain the army can approach but
+        # never technically enter).
         if self._current_search_target is not None:
             marine_sectors = _sectors_of(state.marines, spec, orientation)
-            if self._current_search_target in marine_sectors:
+            self._search_target_steps += 1
+            arrived = self._current_search_target in marine_sectors
+            timed_out = self._search_target_steps >= self.config.search_timeout_steps
+            if arrived or timed_out:
                 self._cleared_sectors.add(self._current_search_target)
-                self._current_search_target = None
+                self._clear_search_target()
 
         if self._current_search_target is None:
             candidates = [s for s in range(spec.grid.num_sectors) if s not in self._cleared_sectors]
@@ -116,6 +131,10 @@ class ScriptedPolicy:
             self._current_search_target = max(candidates)
 
         return spec.move_action_for_sector(self._current_search_target)
+
+    def _clear_search_target(self) -> None:
+        self._current_search_target = None
+        self._search_target_steps = 0
 
 
 def _sectors_of(units: Iterable[UnitInfo], spec: ActionSpaceSpec, orientation: SpawnOrientation) -> set[int]:
