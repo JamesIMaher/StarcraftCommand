@@ -238,11 +238,12 @@ class SC2FightEnv(gym.Env):
         concentration_threshold) -- Mass / Concentration of Force -- so a
         kill landed with a large army earns full credit while one landed
         with a tiny, exposed squad earns much less, AND by the separate,
-        smaller kill_value_scale, since killed_value only ever increases
-        (kills aren't offset by an eventual loss the way economic value is)
-        -- observed in practice: a losing episode's ep_rew_mean went UP,
-        because kills traded during a losing fight outweighed the terminal
-        penalty and the (comparatively small) economic-collapse penalty.
+        smaller kill_value_scale, AND capped at kill_value_cap -- since
+        killed_value only ever increases (kills aren't offset by an eventual
+        loss the way economic value is), all three matter together: observed
+        in practice, a losing episode's ep_rew_mean went UP because kills
+        traded during a losing fight outweighed the terminal penalty and the
+        (comparatively small) economic-collapse penalty.
         """
         cfg = self.config.reward
         total_value = self._state.total_value_units + self._state.total_value_structures
@@ -263,7 +264,13 @@ class SC2FightEnv(gym.Env):
         capped_current = min(total_value, cfg.economic_value_cap)
         capped_prev = min(self._prev_total_value, cfg.economic_value_cap)
         army_delta = capped_current - capped_prev
-        kill_delta = kill_value - self._prev_kill_value
+
+        # kill_value only ever increases (kills aren't "undone"), so like
+        # total_value it needs a cap or a long grindy fight against a
+        # continuously-spawning bot has no natural ceiling.
+        capped_kill_current = min(kill_value, cfg.kill_value_cap)
+        capped_kill_prev = min(self._prev_kill_value, cfg.kill_value_cap)
+        kill_delta = capped_kill_current - capped_kill_prev
         concentration_factor = min(1.0, len(self._state.marines) / max(cfg.concentration_threshold, 1))
 
         self._prev_total_value = total_value

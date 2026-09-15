@@ -117,18 +117,18 @@ and per-sector unit presence -- rather than invented heuristics:
   episode earned +2.85 in economic reward alone this way. Growth below the
   cap is fully rewarded; past it, growing the army further earns nothing
   more.
-- **Kill value, scaled by Concentration of Force AND discounted**:
+- **Kill value, scaled by Concentration of Force, discounted, AND capped**:
   `killed_value_units` + `killed_value_structures` delta, multiplied by both
   `min(1, marine_count / concentration_threshold)` (a kill landed with a
   large army earns full credit; one landed with a small, exposed squad earns
-  much less) and the separate `kill_value_scale` (default `0.1`). The extra
-  discount matters because killed-value only ever increases -- it is *not*
-  offset by an eventual loss the way economic value is -- confirmed in
-  practice: a losing episode's `ep_rew_mean` went *up*, because kills traded
-  during a losing fight outweighed the terminal penalty and the
-  (comparatively small) economic-collapse penalty. `kill_value_scale` keeps
-  "traded some kills before losing" a minor bonus, not something that can
-  rival actually winning.
+  much less) and the separate `kill_value_scale` (default `0.1`), then
+  capped at `kill_value_cap` (default `2000.0`). Killed-value only ever
+  increases -- it is *not* offset by an eventual loss the way economic value
+  is, and has no natural ceiling the way a hard cap gives total_value (a
+  long grindy fight against a continuously-spawning bot can otherwise run it
+  into the thousands) -- confirmed in practice: a losing episode's
+  `ep_rew_mean` went *up* twice, once from kill-value alone and later even
+  with the discount in place, from economic value alone before it had a cap.
 - **Home-defense penalty** (Economy of Force / Security): a per-step
   penalty while the home sector has enemy units present and no marines
   there to respond.
@@ -136,18 +136,25 @@ and per-sector unit presence -- rather than invented heuristics:
   time an enemy unit is seen in a given sector during an episode, rewarding
   exploration itself rather than only its downstream combat consequences.
 
-All shaping coefficients are deliberately small relative to the terminal
-+-1 reward (see the comments in `config.py`) -- shaping nudges the policy
-toward useful sub-behaviors faster than sparse win/loss alone could teach
-them, but the actual objective stays winning the game, not maximizing the
-shaped proxy. Shaping applies on every step, **including the terminal one**
--- a loss typically means the base/army gets wiped out right at the end, so
-computing the economic-value delta there too is what actually charges the
-agent for that collapse; skipping it (an earlier bug) meant reward already
-banked from building an economy earlier in the game was never offset by the
-final defeat, so a losing episode's summed reward could still come out
-positive. `reward.terminal_reward_scale` (default `1.0`) is an additional
-knob to further weight the terminal win/loss signal if needed.
+Even with every component capped, their *sum* can still reach a few points
+of reward regardless of outcome -- capping bounds each channel, but only the
+terminal term actually guarantees winning beats losing. So
+`reward.terminal_reward_scale` (default `10.0`) is deliberately set well
+above 1: with the current caps, worst-case shaping per episode is roughly
+`shaping_coefficient * (economic_value_cap + kill_value_scale *
+kill_value_cap) + scouting_bonus * num_sectors` ~= 4.9, and 10x (+-10)
+comfortably dominates that with margin -- any win outscores any loss no
+matter how much shaping a losing episode racks up. This is tested directly
+(`test_default_config_guarantees_any_win_outscores_a_heavily_shaped_loss`)
+against the actual shipped defaults, specifically to catch this class of
+imbalance if the caps/scale are ever retuned again.
+
+Shaping applies on every step, **including the terminal one** -- a loss
+typically means the base/army gets wiped out right at the end, so computing
+the economic-value delta there too is what actually charges the agent for
+that collapse; skipping it (an earlier bug) meant reward already banked
+from building an economy earlier in the game was never offset by the final
+defeat.
 
 ## Repository layout
 
@@ -389,9 +396,10 @@ All under `env:` in `configs/default.yaml`:
 | `reward.economic_value_cap` | `4000.0` | Ceiling on economic value used for the reward -- prevents indefinite hoarding |
 | `reward.concentration_threshold` | `4` | Marine count for full kill-reward credit; scaled down below it |
 | `reward.kill_value_scale` | `0.1` | Additional discount on kill-value credit, on top of concentration scaling |
+| `reward.kill_value_cap` | `2000.0` | Ceiling on kill value used for the reward -- kills alone can't grind out unbounded reward |
 | `reward.home_defense_penalty` | `0.05` | Per-step penalty while home is undefended and under attack |
 | `reward.scouting_bonus` | `0.02` | One-time reward per newly-sighted enemy sector per episode |
-| `reward.terminal_reward_scale` | `1.0` | Multiplies PySC2's own terminal win/loss reward |
+| `reward.terminal_reward_scale` | `10.0` | Multiplies PySC2's own terminal win/loss reward -- deliberately dominant, see "How it works" |
 
 `SC2FightEnv.step()` also returns each component separately in its `info`
 dict (`reward_terminal`, `reward_economic`, `reward_kill`,
@@ -401,7 +409,7 @@ training run by default) accumulates these per episode and prints a line to
 the console the moment each episode ends, e.g.:
 
 ```
-[episode end] total=-0.847  terminal=-1.000 economic=+0.320 kill=+0.004 home_defense=-0.150 scouting=+0.020
+[episode end] total=-9.680  terminal=-10.000 economic=+0.320 kill=+0.004 home_defense=-0.150 scouting=+0.020
 ```
 
 It also logs each component to TensorBoard under `reward_breakdown/*`. This

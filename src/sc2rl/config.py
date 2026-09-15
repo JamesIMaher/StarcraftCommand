@@ -81,6 +81,14 @@ class RewardConfig:
     # "traded some kills before losing" stays a minor bonus rather than
     # something that can rival actually winning.
     kill_value_scale: float = 0.1
+    # Ceiling on (killed_value_units + killed_value_structures) used for the
+    # kill-value reward. killed_value only ever increases (kills aren't
+    # "undone"), so like economic value it needs a cap: a long, grindy fight
+    # trading kills against a continuously-spawning bot can otherwise run
+    # this into the thousands with no natural ceiling the way
+    # economic_value_cap gives total_value. ~2000 is generous (most of a
+    # real enemy army/base) without being unbounded.
+    kill_value_cap: float = 2000.0
     # Economy of Force / Security: per-step penalty while the home sector has
     # enemy units present and no friendly marines there to respond.
     home_defense_penalty: float = 0.05
@@ -88,13 +96,19 @@ class RewardConfig:
     # ever seen in a given sector during an episode -- rewards scouting
     # itself, separate from combat outcomes.
     scouting_bonus: float = 0.02
-    # Multiplies PySC2's own terminal win/loss reward (+-1). 1.0 = untouched.
-    # Raise this if a full episode's cumulative shaping still rivals or
-    # exceeds the terminal signal in magnitude -- shaping now applies on
-    # every step including the terminal one (see sc2_env_wrapper.py), so a
-    # losing episode's final collapse in economic value is captured; this
-    # knob is for further tuning the balance if that alone isn't enough.
-    terminal_reward_scale: float = 1.0
+    # Multiplies PySC2's own terminal win/loss reward (+-1). Set well above
+    # 1.0 deliberately: even with economic_value_cap and kill_value_cap in
+    # place, a fully-built economy plus a long fight can still sum to a few
+    # points of shaping reward regardless of outcome -- confirmed live, a
+    # losing episode's ep_rew_mean stayed above +2. Capping individual
+    # components bounds each one, but doesn't guarantee winning always beats
+    # losing on its own; only the terminal term does that reliably. With the
+    # current caps, worst-case shaping per episode is roughly
+    # shaping_coefficient * (economic_value_cap + kill_value_scale *
+    # kill_value_cap) + scouting_bonus * num_sectors =~ 0.001 * (4000 + 0.1 *
+    # 2000) + 0.02 * 36 =~ 4.9 -- 10x here (+-10) comfortably dominates that
+    # with margin, so any win outscores any loss regardless of shaping.
+    terminal_reward_scale: float = 10.0
 
     @staticmethod
     def from_dict(data: dict) -> "RewardConfig":

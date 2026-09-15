@@ -89,7 +89,9 @@ def test_legal_build_action_is_translated_and_cooldown_applied():
 def test_terminal_reward_passed_through():
     ts0 = fake.make_timestep(minerals=0, food_cap=15)
     ts1 = fake.make_timestep(minerals=0, food_cap=15, reward=1.0, step_type="LAST")
-    env, _ = make_env([ts0, ts1])
+    config = EnvConfig()
+    config.reward.terminal_reward_scale = 1.0
+    env, _ = make_env([ts0, ts1], config)
     env.reset()
     obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
     assert reward == 1.0
@@ -109,6 +111,7 @@ def test_shaping_applies_on_terminal_step_and_captures_collapse():
     config = EnvConfig()
     config.reward.shaping_enabled = True
     config.reward.shaping_coefficient = 1.0
+    config.reward.terminal_reward_scale = 1.0
     env, _ = make_env([ts0, ts1], config)
     env.reset()
     obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
@@ -178,6 +181,27 @@ def test_economic_value_growth_earns_nothing_once_already_past_the_cap():
     env.reset()
     obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
     assert reward == 0.0
+
+
+def test_kill_value_capped_to_prevent_unbounded_grinding_reward():
+    # Regression test: killed_value only ever increases (kills aren't
+    # "undone"), so unlike a hard-capped economic value, a long grindy fight
+    # against a continuously-spawning bot has no natural ceiling without
+    # this. Growth below the cap is still fully rewarded; growth past it
+    # earns nothing further.
+    marines = [fake.marine(i, x=1, y=1) for i in range(4)]  # concentration_factor = 1.0 at threshold
+    ts0 = fake.make_timestep(units=marines, minerals=0, food_cap=15, killed_value_units=90)
+    ts1 = fake.make_timestep(units=marines, minerals=0, food_cap=15, reward=0.0, killed_value_units=150)
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.shaping_coefficient = 1.0
+    config.reward.kill_value_scale = 1.0
+    config.reward.concentration_threshold = 4
+    config.reward.kill_value_cap = 100.0
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
+    assert reward == 10.0  # only the 90 -> 100 portion counts, not 90 -> 150
 
 
 def test_reward_shaping_rewards_building_structures_not_just_training_units():
@@ -317,6 +341,7 @@ def test_step_info_exposes_per_component_reward_breakdown():
     config = EnvConfig()
     config.reward.shaping_enabled = True
     config.reward.shaping_coefficient = 1.0
+    config.reward.terminal_reward_scale = 1.0
     env, _ = make_env([ts0, ts1], config)
     env.reset()
     obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
@@ -326,3 +351,37 @@ def test_step_info_exposes_per_component_reward_breakdown():
         "reward_terminal", "reward_economic", "reward_kill", "reward_home_defense", "reward_scouting",
     }
     assert reward == sum(info.values())
+
+
+def test_default_config_guarantees_any_win_outscores_a_heavily_shaped_loss():
+    # The core invariant terminal_reward_scale exists to protect: winning
+    # must always beat losing, no matter how much shaping reward a losing
+    # episode racks up. Uses the actual default config (no overrides) so
+    # this catches drift if the caps/scale are ever retuned out of balance
+    # again -- exactly the class of bug that recurred multiple times before
+    # kill_value_cap and a dominant terminal_reward_scale were added.
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+
+    # Losing episode that racks up close to the maximum plausible shaping:
+    # economic and kill value both driven to their caps, plus some scouting.
+    enemies = [fake.enemy_unit(100 + i, fake.UNIT_MARINE, x=float(i * 10), y=1.0) for i in range(3)]
+    marines = [fake.marine(i, x=1, y=1) for i in range(4)]  # concentration_factor = 1.0
+    loss_ts0 = fake.make_timestep(units=marines, minerals=0, food_cap=15)
+    loss_ts1 = fake.make_timestep(
+        units=marines + enemies, minerals=0, food_cap=15, reward=-1.0, step_type="LAST",
+        total_value_units=config.reward.economic_value_cap,
+        killed_value_units=config.reward.kill_value_cap,
+    )
+    loss_env, _ = make_env([loss_ts0, loss_ts1], config)
+    loss_env.reset()
+    _, loss_reward, _, _, _ = loss_env.step(FixedAction.NO_OP)
+
+    # Winning episode with zero shaping at all.
+    win_ts0 = fake.make_timestep(minerals=0, food_cap=15)
+    win_ts1 = fake.make_timestep(minerals=0, food_cap=15, reward=1.0, step_type="LAST")
+    win_env, _ = make_env([win_ts0, win_ts1], config)
+    win_env.reset()
+    _, win_reward, _, _, _ = win_env.step(FixedAction.NO_OP)
+
+    assert win_reward > loss_reward
