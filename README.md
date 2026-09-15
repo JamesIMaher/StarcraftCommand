@@ -304,3 +304,23 @@ python -m sc2rl.inference.play --checkpoint checkpoints/final_model --episodes 5
   environment parallelism -- revisit `SubprocVecEnv` (multiple concurrent
   `SC2Env` instances) only if training throughput turns out to matter in
   practice.
+
+### Tuning the reward/masking config knobs
+
+All under `env:` in `configs/default.yaml`:
+
+| Key | Default | What it does |
+|---|---|---|
+| `masking.min_marines_to_move` | `4` | Movement/attack actions illegal below this many marines |
+| `reward.shaping_enabled` | `true` | Master on/off switch for everything below |
+| `reward.shaping_coefficient` | `0.001` | Scales the army-value and kill-value shaping terms |
+| `reward.concentration_threshold` | `4` | Marine count for full kill-reward credit; scaled down below it |
+| `reward.home_defense_penalty` | `0.05` | Per-step penalty while home is undefended and under attack |
+| `reward.scouting_bonus` | `0.02` | One-time reward per newly-sighted enemy sector per episode |
+
+`masking.min_marines_to_move` and `reward.concentration_threshold` are
+separate knobs on purpose -- one is a hard action-legality gate, the other a
+soft reward scaling -- but they default to the same value (4) since they're
+both expressing "this is what counts as a real squad" for this scenario;
+tune them independently if that stops making sense (e.g. a larger map where
+you'd want a bigger minimum force before committing).
