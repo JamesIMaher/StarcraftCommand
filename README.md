@@ -308,6 +308,37 @@ This restores the weights/optimizer exactly and trains for another
 (not up to an absolute total -- see the docstring in `train.py` if you want
 the exact semantics).
 
+### Imitation-learning warm start (behavior cloning)
+
+Same spirit as AlphaStar's imitation-learning bootstrap from human replays,
+adapted to what our action space actually supports: AlphaStar imitated raw
+replay actions (mouse/camera/hotkeys) because its action space *was* that
+full interface. Ours is a simplified custom abstraction with no direct
+mapping from human replay data, so the practical equivalent is a **scripted
+teacher** (`env/scripted_policy.py`) operating in our own action space:
+build a small base, keep training marines, defend home if it's under attack
+and undefended, and -- once mobilized to a real attack force
+(`ScriptedPolicyConfig.attack_threshold`, default 20 marines, separate from
+`masking.min_marines_to_move` which only gates whether movement is legal at
+all) -- commit to a **search-and-destroy** pattern: sweep sectors
+farthest-from-home first, redirect immediately to any sector where the
+enemy is actually spotted, and mark a sector cleared once the army arrives
+there and finds nothing.
+
+Collect a demonstration dataset from real games with it, then pretrain on
+that before RL fine-tuning:
+
+```powershell
+python -m sc2rl.training.collect_demonstrations --config configs/default.yaml --episodes 15 --out demonstrations.npz
+python -m sc2rl.training.train --config configs/default.yaml --bc-dataset demonstrations.npz
+```
+
+`--bc-dataset` initializes the policy's weights via supervised learning
+(cross-entropy against the scripted teacher's choices, with action masking
+applied so an imitated-but-illegal action never gets credit) before
+`.learn()` starts -- mutually exclusive with `--resume-from`, since a
+resumed checkpoint already has trained weights.
+
 ## Running a trained agent
 
 ```powershell

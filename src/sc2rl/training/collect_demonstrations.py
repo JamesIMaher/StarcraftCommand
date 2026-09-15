@@ -13,12 +13,12 @@ import numpy as np
 
 from ..config import Config
 from ..env.sc2_env_wrapper import SC2FightEnv
-from ..env.scripted_policy import ScriptedPolicyConfig, scripted_action
+from ..env.scripted_policy import ScriptedPolicy, ScriptedPolicyConfig
 
 
 def collect(config: Config, episodes: int, env_factory=None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     env = SC2FightEnv(config.env) if env_factory is None else SC2FightEnv(config.env, env_factory=env_factory)
-    policy_config = ScriptedPolicyConfig()
+    policy = ScriptedPolicy(ScriptedPolicyConfig())
     observations: list[np.ndarray] = []
     actions: list[int] = []
     masks: list[np.ndarray] = []
@@ -26,10 +26,11 @@ def collect(config: Config, episodes: int, env_factory=None) -> tuple[np.ndarray
     try:
         for episode in range(episodes):
             obs, _ = env.reset()
+            policy.reset()
             terminated = truncated = False
             while not (terminated or truncated):
                 mask = env.action_masks()
-                action = scripted_action(env.state, env.action_spec, env.masking_config, env.orientation, policy_config)
+                action = policy.action(env.state, env.action_spec, env.masking_config, env.orientation)
                 observations.append(obs)
                 actions.append(action)
                 masks.append(mask)
