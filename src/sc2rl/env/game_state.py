@@ -33,6 +33,7 @@ _BUILD_COMPLETE_PROGRESS = 1.0
 # re-deriving something weaker (e.g. summing unit health ourselves misses
 # kills and economy entirely).
 _SCORE_TOTAL_VALUE_UNITS = 3
+_SCORE_TOTAL_VALUE_STRUCTURES = 4
 _SCORE_KILLED_VALUE_UNITS = 5
 _SCORE_KILLED_VALUE_STRUCTURES = 6
 
@@ -72,6 +73,7 @@ class GameState:
     food_used: int
     food_cap: int
     total_value_units: int = 0
+    total_value_structures: int = 0
     killed_value_units: int = 0
     killed_value_structures: int = 0
 
@@ -119,6 +121,7 @@ class GameState:
             food_used=int(player.food_used),
             food_cap=int(player.food_cap),
             total_value_units=int(score[_SCORE_TOTAL_VALUE_UNITS]),
+            total_value_structures=int(score[_SCORE_TOTAL_VALUE_STRUCTURES]),
             killed_value_units=int(score[_SCORE_KILLED_VALUE_UNITS]),
             killed_value_structures=int(score[_SCORE_KILLED_VALUE_STRUCTURES]),
         )

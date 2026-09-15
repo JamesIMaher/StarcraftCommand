@@ -64,8 +64,11 @@ def test_command_center_pos_returns_coords():
 
 
 def test_score_cumulative_fields_parsed():
-    ts = fake.make_timestep(total_value_units=100, killed_value_units=25, killed_value_structures=10)
+    ts = fake.make_timestep(
+        total_value_units=100, total_value_structures=75, killed_value_units=25, killed_value_structures=10,
+    )
     state = GameState.from_observation(ts)
     assert state.total_value_units == 100
+    assert state.total_value_structures == 75
     assert state.killed_value_units == 25
     assert state.killed_value_structures == 10

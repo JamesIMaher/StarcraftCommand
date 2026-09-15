@@ -104,7 +104,7 @@ class SC2FightEnv(gym.Env):
         self._sc2_env = None
         self._state: GameState | None = None
         self._cooldowns = np.zeros(self.action_spec.num_actions, dtype=np.int32)
-        self._prev_total_value_units = 0
+        self._prev_total_value = 0
         self._prev_kill_value = 0
         self._seen_enemy_sectors: set[int] = set()
         self._orientation = SpawnOrientation(map_size=config.map_size, mirror_x=False, mirror_y=False)
@@ -124,7 +124,7 @@ class SC2FightEnv(gym.Env):
         self._cooldowns[:] = 0
         self._state = GameState.from_observation(timesteps[0])
         self._orientation = self._compute_orientation(self._state)
-        self._prev_total_value_units = self._state.total_value_units
+        self._prev_total_value = self._state.total_value_units + self._state.total_value_structures
         self._prev_kill_value = self._state.killed_value_units + self._state.killed_value_structures
         self._seen_enemy_sectors = set()
         obs = featurize(self._state, self.grid, self.config.max_game_loop_norm, self._orientation)
@@ -186,20 +186,29 @@ class SC2FightEnv(gym.Env):
         return reward
 
     def _combat_shaping_reward(self) -> float:
-        """Army-value growth is always rewarded/penalized in full; the
-        killed-value portion is scaled by min(1, marine_count /
-        concentration_threshold) -- Mass / Concentration of Force -- so a
-        kill landed with a large army earns full credit while one landed
-        with a tiny, exposed squad earns much less."""
+        """Economic-value growth (units AND structures -- training a marine
+        or completing a supply depot/barracks both count) is always
+        rewarded/penalized in full; the killed-value portion is scaled by
+        min(1, marine_count / concentration_threshold) -- Mass /
+        Concentration of Force -- so a kill landed with a large army earns
+        full credit while one landed with a tiny, exposed squad earns much
+        less.
+
+        Including total_value_structures matters: without it, building a
+        supply depot or barracks earned zero immediate shaped reward (only
+        the eventual marines trained from it did), which is a weak, indirect
+        signal for "build infrastructure early" -- observed in practice as
+        the policy learning to delay barracks construction.
+        """
         cfg = self.config.reward
-        total_value = self._state.total_value_units
+        total_value = self._state.total_value_units + self._state.total_value_structures
         kill_value = self._state.killed_value_units + self._state.killed_value_structures
 
-        army_delta = total_value - self._prev_total_value_units
+        army_delta = total_value - self._prev_total_value
         kill_delta = kill_value - self._prev_kill_value
         concentration_factor = min(1.0, len(self._state.marines) / max(cfg.concentration_threshold, 1))
 
-        self._prev_total_value_units = total_value
+        self._prev_total_value = total_value
         self._prev_kill_value = kill_value
 
         return cfg.shaping_coefficient * (army_delta + concentration_factor * kill_delta)

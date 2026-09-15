@@ -92,11 +92,13 @@ def make_timestep(
     reward: float = 0.0,
     step_type: str = "MID",
     total_value_units: int = 0,
+    total_value_structures: int = 0,
     killed_value_units: int = 0,
     killed_value_structures: int = 0,
 ) -> FakeTimeStep:
     score = [0] * _SCORE_CUMULATIVE_LEN
     score[3] = total_value_units
+    score[4] = total_value_structures
     score[5] = killed_value_units
     score[6] = killed_value_structures
     return FakeTimeStep(

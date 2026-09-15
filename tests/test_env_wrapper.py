@@ -120,6 +120,22 @@ def test_reward_shaping_rewards_rising_army_value_regardless_of_marine_count():
     assert reward == 50.0  # army-value delta is never scaled by concentration
 
 
+def test_reward_shaping_rewards_building_structures_not_just_training_units():
+    # Regression test: building a supply depot/barracks previously earned
+    # zero immediate shaped reward (only total_value_units was tracked) --
+    # a weak, indirect signal for "build infrastructure early" that showed
+    # up in practice as the policy learning to delay barracks construction.
+    ts0 = fake.make_timestep(minerals=0, food_cap=15, total_value_structures=0)
+    ts1 = fake.make_timestep(minerals=0, food_cap=15, reward=0.0, total_value_structures=100)
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.shaping_coefficient = 1.0
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
+    assert reward == 100.0
+
+
 def test_reward_shaping_penalizes_falling_army_value():
     ts0 = fake.make_timestep(minerals=0, food_cap=15, total_value_units=100)
     ts1 = fake.make_timestep(minerals=0, food_cap=15, reward=0.0, total_value_units=50)  # a marine died
