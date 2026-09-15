@@ -128,7 +128,7 @@ def test_enemy_race_one_hot():
     state = GameState.from_observation(ts)
     vec = featurize(state, grid, max_game_loop=1000, orientation=identity_orientation(grid))
     # race one-hot block is the 4 features right before the game-loop fraction
-    race_block = vec[14:18]
+    race_block = vec[15:19]
     assert list(race_block) == [0.0, 0.0, 1.0, 0.0]  # terran, protoss, zerg, unknown
 
 
@@ -137,5 +137,18 @@ def test_unknown_enemy_race_when_no_town_hall_seen():
     ts = fake.make_timestep(units=[fake.enemy_unit(1, fake.UNIT_MARINE, x=1, y=1)])
     state = GameState.from_observation(ts)
     vec = featurize(state, grid, max_game_loop=1000, orientation=identity_orientation(grid))
-    race_block = vec[14:18]
+    race_block = vec[15:19]
     assert race_block[3] == 1.0  # "unknown" flag set
+
+
+def test_idle_marine_fraction_feature():
+    grid = make_grid()
+    ts = fake.make_timestep(units=[
+        fake.marine(1, x=8, y=8, idle=True),
+        fake.marine(2, x=8, y=8, idle=False),
+        fake.marine(3, x=8, y=8, idle=False),
+        fake.marine(4, x=8, y=8, idle=False),
+    ])
+    state = GameState.from_observation(ts)
+    vec = featurize(state, grid, max_game_loop=1000, orientation=identity_orientation(grid))
+    assert vec[6] == 0.25  # right after marine count (4) and average health (5)

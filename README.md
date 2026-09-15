@@ -35,13 +35,18 @@ running StarCraft II client (see "Status" below).
 
 **Observation.** Each step, `GameState.from_observation()` parses PySC2's
 `raw_units`/`player` fields into a snapshot, and `observation.py` turns that
-into a flat `float32` vector: ~19 global scalars (minerals, supply
-used/cap/headroom, marine count + average health, SCV count, supply
+into a flat `float32` vector: 20 global scalars (minerals, supply
+used/cap/headroom, marine count + average health + idle fraction, SCV count, supply
 depot/barracks counts -- in-progress and complete, visible enemy count +
 health, enemy race one-hot, episode-progress fraction) plus 6 features per
-grid sector for a 6x6 grid -- 235 floats total at the default grid size
+grid sector for a 6x6 grid -- 236 floats total at the default grid size
 (`env.grid`, configurable). This is a
-`gymnasium.spaces.Box(0.0, 1.0, shape=(235,))`. Four of the per-sector
+`gymnasium.spaces.Box(0.0, 1.0, shape=(236,))`. The idle fraction ("has
+the army finished what it was told to do") is there because the scripted
+teacher's whole reorder rule is majority-idle: without it the imitation
+target depended on something the policy couldn't see, a hard floor on the
+BC loss, and the RL policy couldn't tell an army mid-move from one standing
+around. Four of the per-sector
 features are a snapshot of the current step (friendly/enemy count and
 average health in that sector); the other two are **minimap memory**:
 
@@ -170,7 +175,7 @@ The env prints the bounds it used once (`[env] sector grid laid over ...`).
 
 **Neural network.** `MaskablePPO`'s default `MlpPolicy`
 (`sb3_contrib.common.maskable.policies.MaskableActorCriticPolicy`) is two
-small separate PyTorch MLPs reading the same 235-dim input: a **policy head**
+small separate PyTorch MLPs reading the same 236-dim input: a **policy head**
 (2 hidden layers x 64 units, `Tanh` activation, outputting 40 logits -> the
 per-action probabilities after masking) and a **value head** (same shape,
 outputting a single scalar -- the estimated value of the current state).
@@ -407,7 +412,7 @@ pip install -e . --no-deps
 
 `sb3-contrib` auto-selects CUDA if `torch.cuda.is_available()` -- no config
 needed. That said, don't expect a big speedup here: the policy/value
-networks are tiny (2x64-unit MLPs over a 235-dim vector), so the actual
+networks are tiny (2x64-unit MLPs over a 236-dim vector), so the actual
 matrix-multiply work is trivial either way. The real bottleneck is the
 StarCraft II client itself stepping the game forward each action -- a
 single-threaded, real-time-simulation cost that a GPU doesn't touch at all.
@@ -543,6 +548,22 @@ python -m sc2rl.training.train --config configs/default.yaml --bc-dataset demons
 applied so an imitated-but-illegal action never gets credit) before
 `.learn()` starts -- mutually exclusive with `--resume-from`, since a
 resumed checkpoint already has trained weights.
+
+**Reading the BC loss.** It's the mean negative log-likelihood of the
+teacher's action, so `exp(-loss)` is the average probability the policy
+gives to what the teacher did: 0.2 means ~82%. It does not go to zero and
+shouldn't be expected to -- the teacher's choice depends on its own hidden
+state (current search target, cleared-sector memory), so the same
+observation can legitimately map to different actions. Each epoch also
+prints `held_out_loss` on a contiguous 10% block of the dataset that was
+never trained on (contiguous, not shuffled: consecutive steps of one game
+are near-duplicates, so a shuffled split leaks and flatters). That number
+answers "should I train more epochs?": if it's still falling alongside the
+training loss, yes (`--bc-epochs 30`); if it's flat or rising while the
+training loss keeps dropping, the floor has been reached and more epochs
+would only memorize the dataset. The loss is a proxy anyway -- what matters
+is whether the pretrained policy plays like the teacher, which
+`sc2rl.inference.play` on the saved model shows directly.
 
 A dataset is tied to the observation layout it was collected under: any
 change to `observation.py`'s features or to `env.grid` changes the vector

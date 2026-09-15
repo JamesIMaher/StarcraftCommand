@@ -63,6 +63,14 @@ def featurize(
         sum(u.health_fraction for u in state.marines) / num_marines if num_marines else 0.0
     )
     features.append(avg_marine_health)
+    # Fraction of marines with no active order: "has the army finished what
+    # it was told to do." The scripted teacher's whole reorder rule is
+    # majority-idle, so without this the imitation target was a function of
+    # something the policy couldn't see -- a hard floor on the BC loss -- and
+    # the RL policy had no way to tell an army mid-move from one standing
+    # around.
+    idle_marines = sum(1 for u in state.marines if u.is_idle)
+    features.append(idle_marines / num_marines if num_marines else 0.0)
 
     num_scvs = len(state.scvs)
     features.append(min(num_scvs / _SCV_COUNT_NORM, 1.0))

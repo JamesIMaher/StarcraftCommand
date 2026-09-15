@@ -38,9 +38,12 @@ def test_behavior_cloning_reduces_loss_on_a_learnable_pattern(capsys):
     pretrain_with_behavior_cloning(model, observations, actions, masks, epochs=15, batch_size=32, learning_rate=1e-2)
 
     printed = capsys.readouterr().out
-    losses = [float(line.split("loss=")[1]) for line in printed.splitlines() if "loss=" in line]
+    epoch_lines = [line for line in printed.splitlines() if line.startswith("BC pretrain epoch")]
+    losses = [float(line.split("loss=")[1].split()[0]) for line in epoch_lines]
+    held_out = [float(line.split("held_out_loss=")[1]) for line in epoch_lines]
     assert len(losses) == 15
     assert losses[-1] < losses[0] * 0.5  # meaningfully reduced, not just noise
+    assert held_out[-1] < held_out[0] * 0.5  # the held-out block follows the same learnable pattern
 
     # After training, the policy should now prefer the imitated actions.
     action_a, _ = model.predict(obs_a, deterministic=True)
