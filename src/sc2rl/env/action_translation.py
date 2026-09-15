@@ -48,6 +48,15 @@ class ActionTranslator:
         # pathing layer once a game is running -- see pathing.py. None here
         # means "unknown": fall back to sector centers.
         self.sector_targets: list[tuple[float, float] | None] | None = None
+        # Ground reachable from the base this episode (see pathing.py), used
+        # to snap a known enemy structure's position -- which is inside its
+        # own unpathable footprint, and may be on high ground the army can
+        # only reach via a ramp -- to the nearest reachable point.
+        self.pathing = None
+
+    # A structure is at most a few cells across; a reachable point this far
+    # from its center is adjacent to it, i.e. in a marine's weapon range.
+    _STRUCTURE_SNAP_RADIUS = 6.0
 
     def translate(self, action_index: int, state: GameState, orientation: SpawnOrientation) -> list:
         if action_index == FixedAction.NO_OP:
@@ -148,8 +157,15 @@ class ActionTranslator:
         n = len(state.marines)
         army_x = sum(m.x for m in state.marines) / n
         army_y = sum(m.y for m in state.marines) / n
-        nearest = min(in_sector, key=lambda u: (u.x - army_x) ** 2 + (u.y - army_y) ** 2)
-        return nearest.x, nearest.y
+        for structure in sorted(in_sector, key=lambda u: (u.x - army_x) ** 2 + (u.y - army_y) ** 2):
+            if self.pathing is None:
+                return structure.x, structure.y
+            snapped = self.pathing.nearest_within(structure.x, structure.y, self._STRUCTURE_SNAP_RADIUS)
+            if snapped is not None:
+                return snapped
+        # Every known structure here is out of reach (e.g. high ground with
+        # no ramp from this side): fall back to the sector's own target.
+        return None
 
     def _clamp_to_playable(self, x: float, y: float) -> tuple[float, float]:
         grid = self.spec.grid

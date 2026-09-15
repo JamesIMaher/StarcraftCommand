@@ -503,13 +503,17 @@ def test_unreachable_sectors_are_masked_pre_explored_and_targets_are_pathable():
 
     from sc2rl.env.observation import FEATURES_PER_SECTOR, observation_length
 
-    # 4x4 grid over a 64 map: 16-unit cells. Sector 15 (x,y in 48..64) has no
-    # pathable ground at all; sector 0 is pathable only in a strip x < 4.
+    # 4x4 grid over a 64 map: 16-unit cells. Sector 15 (x,y in 48..64) is a
+    # pathable plateau with no connection to the rest of the map (a wall of
+    # unpathable cells around it) -- pathable, but not reachable, so it must
+    # count as unreachable. Sector 0 is pathable only in a strip x < 4.
     pathable = np.ones((64, 64), dtype=bool)
-    pathable[48:64, 48:64] = False
+    pathable[47, 47:64] = False
+    pathable[47:64, 47] = False
     pathable[0:16, 4:16] = False
     marines = [fake.marine(i, x=30, y=30) for i in range(25)]
-    ts0 = fake.make_timestep(units=marines, minerals=0, food_cap=15, pathable=pathable)
+    base = [fake.command_center(99, x=30, y=30)]  # near side of both axes: identity orientation
+    ts0 = fake.make_timestep(units=marines + base, minerals=0, food_cap=15, pathable=pathable)
     config = EnvConfig()
     config.grid.cols = config.grid.rows = 4
     config.masking.min_marines_to_advance = 20

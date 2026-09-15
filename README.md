@@ -121,17 +121,25 @@ every sector with one of our buildings in it -- with ~7-unit cells the base
 straddles several, and a hard-coded sector 0 silently missed attacks on the
 barracks next door (confirmed live as the scripted teacher never returning
 to defend, and losing most games, right after the grid was laid over the
-playable area). Otherwise it's the *pathable* point
-nearest the sector's center, taken from the minimap `pathable` feature
-layer (`env/pathing.py`), which at minimap size == raw resolution is in the
-exact frame unit positions use. The playable rectangle still contains
-unpathable terrain -- cliffs, and on Simple64 the two corners that aren't
-bases -- and a sector center on a cliff sent the army to park at the
-cliff's edge (confirmed live as marines "trying to reach areas off the
-screen"). A sector with no pathable ground at all is removed from the
-action space for the episode (`SC2FightEnv.unreachable_sectors`, printed
-once at reset) and pre-marked explored so no exploration incentive points
-at it. Every target is also clamped strictly inside the game's own
+playable area). Otherwise it's the *reachable* point
+nearest the sector's center: the minimap `pathable` feature layer
+(`env/pathing.py`), which at minimap size == raw resolution is in the exact
+frame unit positions use, flood-filled from the command center so only
+ground actually connected to the base counts. Both halves matter. The
+playable rectangle contains unpathable terrain -- cliffs, and on Simple64
+the two corners that aren't bases -- and a sector center on a cliff sent
+the army to park at the cliff's edge. And *pathable* isn't *reachable*: the
+layer marks cliff-top plateaus and isolated pockets as pathable even with
+no ramp to them, so "nearest pathable cell" still picked ground the army
+could never stand on (both confirmed live as marines "trying to reach
+areas they can't reach"). A known enemy structure's target is likewise
+snapped to the nearest reachable ground beside it (its own footprint is
+unpathable, and it may be on high ground). A sector with no reachable
+ground at all is removed from the action space for the episode
+(`SC2FightEnv.unreachable_sectors`) and pre-marked explored so no
+exploration incentive points at it; the env prints the reachable cell
+count and any such sectors once at reset (`[env] pathing: ...`), or a
+warning if the observation has no pathable layer. Every target is also clamped strictly inside the game's own
 `playable_area` (read from `SC2Env.game_info` at reset), because the
 playable area is inset from the nominal 64x64 square: an earlier version biased edge-sector targets all the
 way to the literal map corner to reach corner buildings on the old 4x4

@@ -160,6 +160,31 @@ def test_home_recall_follows_the_command_centers_actual_sector():
     assert abs(target_y - center_y) <= 1.0
 
 
+def test_known_structure_target_is_snapped_to_reachable_ground_next_to_it():
+    import numpy as np
+
+    from sc2rl.env.pathing import PathingMap
+
+    # The structure sits inside its own unpathable footprint on a plateau;
+    # only the ground west of x=10 is reachable, and the plateau column at
+    # x=12 is pathable-but-disconnected. The target must be the reachable
+    # cell nearest the structure, not the structure's own position.
+    pathable = np.zeros((64, 64), dtype=bool)
+    pathable[:, :10] = True
+    pathable[:, 12] = True
+    spec = make_spec()
+    translator = ActionTranslator(spec, rng=random.Random(0))
+    translator.pathing = PathingMap(pathable).reachable_from(2.0, 30.0)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.marines.append(fake.marine(1, x=2, y=30))
+    state.enemies.append(fake.enemy_unit(10, fake.UNIT_HATCHERY, x=11, y=8))  # sector 0
+
+    calls = translator.translate(spec.move_action_for_sector(0), state, identity_orientation(spec))
+    target_x, target_y = calls[0].arguments[2]
+    assert abs(target_x - 9.5) <= 1.0  # nearest reachable column, not x=11 or the disconnected x=12
+    assert abs(target_y - 8.5) <= 1.0
+
+
 def test_move_army_ignores_structures_outside_the_target_sector():
     spec = make_spec()
     translator = ActionTranslator(spec, rng=random.Random(0))

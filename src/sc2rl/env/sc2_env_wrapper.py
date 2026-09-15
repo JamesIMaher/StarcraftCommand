@@ -161,6 +161,10 @@ class SC2FightEnv(gym.Env):
         self._state = GameState.from_observation(timesteps[0])
         self._orientation = self._compute_orientation(self._state)
         self._pathing = self._read_pathing(timesteps[0])
+        if self._pathing is not None and self._state.command_center_pos is not None:
+            # Only ground actually connected to the base counts -- see pathing.py.
+            self._pathing = self._pathing.reachable_from(*self._state.command_center_pos)
+        self._translator.pathing = self._pathing
         self._compute_sector_targets()
         self._prev_total_value = self._state.total_value_units + self._state.total_value_structures
         self._prev_kill_value = self._state.killed_value_units + self._state.killed_value_structures
@@ -202,6 +206,9 @@ class SC2FightEnv(gym.Env):
         self._unreachable_sectors = set()
         if self._pathing is None:
             self._translator.sector_targets = None
+            if not self._reported_unreachable:
+                print("[env] WARNING: observation has no pathable layer -- move targets fall back to sector centers")
+                self._reported_unreachable = True
             return
         grid, orientation = self.grid, self._orientation
         targets: list[tuple[float, float] | None] = []
@@ -217,8 +224,12 @@ class SC2FightEnv(gym.Env):
             if target is None:
                 self._unreachable_sectors.add(sector)
         self._translator.sector_targets = targets
-        if self._unreachable_sectors and not self._reported_unreachable:
-            print(f"[env] sectors with no pathable ground (never move targets): {sorted(self._unreachable_sectors)}")
+        if not self._reported_unreachable:
+            print(
+                f"[env] pathing: {self._pathing.cell_count} raw-frame cells reachable from the command "
+                f"center; sectors with no reachable ground (never move targets): "
+                f"{sorted(self._unreachable_sectors) or 'none'}"
+            )
             self._reported_unreachable = True
 
     def _featurize(self) -> np.ndarray:
