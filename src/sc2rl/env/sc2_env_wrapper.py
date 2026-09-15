@@ -11,6 +11,10 @@ from __future__ import annotations
 
 import sys
 
+# NOTE: PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION is set in sc2rl/__init__.py,
+# which runs before this module -- see that file for why. Anything importing
+# pysc2 directly (bypassing `sc2rl`) must set it first itself.
+
 import numpy as np
 import gymnasium as gym
 from absl import flags

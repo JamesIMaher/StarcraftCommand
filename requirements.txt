@@ -2,11 +2,16 @@
 # index (see README "Setup"), otherwise a plain `pip install torch` pulls a
 # multi-GB CUDA build you don't need for this MLP-sized policy.
 pysc2
-# Pinned: pysc2's pulled-in s2clientprotocol wheel was generated with an old
-# protoc and breaks ("Descriptors cannot be created directly") under protobuf
-# >=4. 3.20.3 is the newest version that still works without the slow
-# PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python pure-Python fallback.
-protobuf==3.20.3
+# tensorboard requires protobuf>=6.31.1, but pysc2's bundled s2clientprotocol
+# wheel was generated with an old protoc that breaks ("Descriptors cannot be
+# created directly") under that protobuf version. Both are satisfiable at
+# once by pinning protobuf to what tensorboard wants and forcing the
+# pure-Python protobuf backend for pysc2's stale generated files -- see the
+# PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION env var set at the top of
+# src/sc2rl/env/sc2_env_wrapper.py (the fix has to live in code, not just
+# here, since it must run before anything imports google.protobuf).
+protobuf>=6.31.1,<8.0.0
+tensorboard
 stable-baselines3
 sb3-contrib
 gymnasium
