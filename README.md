@@ -74,7 +74,15 @@ Movement/attack actions specifically
 stay illegal until `masking.min_marines_to_move` marines exist (**Mass /
 Concentration of Force**) -- newly trained marines spawn near home, so while
 blocked they default to passive defense there rather than being committed
-piecemeal.
+piecemeal. Moving to any sector *other than home* needs a separate, higher
+`masking.min_marines_to_advance` (default `20`, matching
+`scripted_policy.py`'s own `attack_threshold`): without this as a hard mask,
+nothing stopped the RL policy from sending the whole army into unexplored
+territory with only `min_marines_to_move` marines -- confirmed live as
+marines exploring too early with too few marines and dying immediately,
+which then taught the policy to avoid moving at all rather than to wait for
+mass. Moving *to* home (e.g. recalling a scattered force, or defending)
+still only needs the lower `min_marines_to_move` bar.
 
 **Neural network.** `MaskablePPO`'s default `MlpPolicy`
 (`sb3_contrib.common.maskable.policies.MaskableActorCriticPolicy`) is two
@@ -146,6 +154,16 @@ and per-sector unit presence -- rather than invented heuristics:
   the net marginal reward of continuing to search can go to zero or
   negative while returning home is strictly zero-or-better -- observed live
   as marines oscillating back toward home instead of continuing to search.
+- **Stale-search penalty**: a further counterweight to the same stalling
+  problem -- exploration_bonus is *also* only one-time per sector, so once
+  the army has visited what it's going to visit for a while, nothing keeps
+  actively pulling it onward. This is a flat per-step penalty
+  (`stale_search_penalty`, default `0.01`) once the army has gone
+  `stale_search_patience` (default `30`) steps without entering a sector it
+  hasn't been in before -- applied only once movement is actually legal, so
+  the early economy-building phase (correctly sitting at home) is never
+  penalized. Observed live as a large, fully-mobilized army parking in one
+  sector indefinitely -- "a huge pile of marines in one location."
 
 Even with every component capped, their *sum* can still reach a few points
 of reward regardless of outcome -- capping bounds each channel, but only the
@@ -402,37 +420,43 @@ All under `env:` in `configs/default.yaml`:
 
 | Key | Default | What it does |
 |---|---|---|
-| `masking.min_marines_to_move` | `4` | Movement/attack actions illegal below this many marines |
+| `masking.min_marines_to_move` | `4` | Movement to the HOME sector illegal below this many marines |
+| `masking.min_marines_to_advance` | `20` | Movement to any OTHER sector illegal below this many marines |
 | `reward.shaping_enabled` | `true` | Master on/off switch for everything below |
 | `reward.shaping_coefficient` | `0.001` | Scales the army-value and kill-value shaping terms |
 | `reward.economic_value_cap` | `4000.0` | Ceiling on economic value used for the reward -- prevents indefinite hoarding |
-| `reward.concentration_threshold` | `4` | Marine count for full kill-reward credit; scaled down below it |
+| `reward.concentration_threshold` | `20` | Marine count for full kill-reward credit; scaled down below it |
 | `reward.kill_value_scale` | `0.1` | Additional discount on kill-value credit, on top of concentration scaling |
 | `reward.kill_value_cap` | `2000.0` | Ceiling on kill value used for the reward -- kills alone can't grind out unbounded reward |
 | `reward.home_defense_penalty` | `0.05` | Per-step penalty while home is undefended and under attack |
 | `reward.scouting_bonus` | `0.02` | One-time reward per newly-sighted enemy sector per episode |
 | `reward.exploration_bonus` | `0.02` | One-time reward per sector a marine newly enters per episode -- counterweight to home_defense_penalty |
+| `reward.stale_search_penalty` | `0.01` | Per-step penalty once the army stalls without reaching a new sector too long |
+| `reward.stale_search_patience` | `30` | Steps of no new-sector progress tolerated before stale_search_penalty kicks in |
 | `reward.terminal_reward_scale` | `10.0` | Multiplies PySC2's own terminal win/loss reward -- deliberately dominant, see "How it works" |
 
 `SC2FightEnv.step()` also returns each component separately in its `info`
 dict (`reward_terminal`, `reward_economic`, `reward_kill`,
-`reward_home_defense`, `reward_scouting`, `reward_exploration`, summing to
-the total reward).
+`reward_home_defense`, `reward_scouting`, `reward_exploration`,
+`reward_stale_search`, summing to the total reward).
 `training/callbacks.py`'s `RewardBreakdownCallback` (wired into every
 training run by default) accumulates these per episode and prints a line to
 the console the moment each episode ends, e.g.:
 
 ```
-[episode end] total=-9.620  terminal=-10.000 economic=+0.320 kill=+0.004 home_defense=-0.150 scouting=+0.020 exploration=+0.040
+[episode end] total=-9.650  terminal=-10.000 economic=+0.320 kill=+0.004 home_defense=-0.150 scouting=+0.020 exploration=+0.040 stale_search=-0.010
 ```
 
 It also logs each component to TensorBoard under `reward_breakdown/*`. This
 is how to actually see which term is driving an imbalance instead of
 reasoning about it from formulas.
 
-`masking.min_marines_to_move` and `reward.concentration_threshold` are
+`masking.min_marines_to_advance` and `reward.concentration_threshold` are
 separate knobs on purpose -- one is a hard action-legality gate, the other a
-soft reward scaling -- but they default to the same value (4) since they're
-both expressing "this is what counts as a real squad" for this scenario;
-tune them independently if that stops making sense (e.g. a larger map where
-you'd want a bigger minimum force before committing).
+soft reward scaling -- but they default to the same value (20) since they're
+both expressing "this is what counts as a real, committed fighting force"
+for this scenario; tune them independently if that stops making sense (e.g.
+a larger map where you'd want a bigger minimum force before committing).
+`masking.min_marines_to_move` is a separate, lower bar -- it only gates
+whether the army can move to the HOME sector at all (e.g. recalling a
+scattered force), not whether it's ready to advance elsewhere.

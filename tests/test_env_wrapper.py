@@ -364,6 +364,71 @@ def test_exploration_bonus_not_awarded_for_home_sector_at_spawn():
     assert reward == 0.0
 
 
+def test_stale_search_penalty_applies_once_patience_exceeded_without_new_sector():
+    # Regression test: once the army has visited what it's going to visit
+    # for a while, exploration_bonus/scouting_bonus (both one-time per
+    # sector) stop pulling it onward -- observed live as a large army
+    # parking in one sector indefinitely ("a huge pile of marines in one
+    # location"). This penalty is the counterweight: it should stay silent
+    # while patience hasn't been exceeded, then kick in.
+    marines = [fake.marine(1, x=1, y=1)]  # stays in the home sector every step
+    timesteps = [fake.make_timestep(units=marines, minerals=0, food_cap=15) for _ in range(4)]
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.stale_search_penalty = 0.01
+    config.reward.stale_search_patience = 2
+    config.masking.min_marines_to_move = 1
+    env, _ = make_env(timesteps, config)
+    env.reset()
+
+    # Home sector was already "visited" at spawn, so this marine never
+    # triggers exploration_bonus -- every step here is "no progress."
+    _, r1, _, _, _ = env.step(FixedAction.NO_OP)  # steps_since_new_sector -> 1
+    assert r1 == 0.0
+    _, r2, _, _, _ = env.step(FixedAction.NO_OP)  # steps_since_new_sector -> 2, still within patience
+    assert r2 == 0.0
+    _, r3, _, _, _ = env.step(FixedAction.NO_OP)  # steps_since_new_sector -> 3, patience exceeded
+    assert r3 == -0.01
+
+
+def test_stale_search_penalty_silent_before_army_can_legally_move():
+    # Standing at home during the early economy-building phase (below
+    # min_marines_to_move) must never be penalized -- that is correct,
+    # required behavior, not stalling.
+    ts = fake.make_timestep(minerals=0, food_cap=15)  # no marines at all
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.stale_search_penalty = 0.01
+    config.reward.stale_search_patience = 0
+    env, _ = make_env([ts, ts, ts], config)
+    env.reset()
+    _, r1, _, _, _ = env.step(FixedAction.NO_OP)
+    _, r2, _, _, _ = env.step(FixedAction.NO_OP)
+    assert r1 == 0.0
+    assert r2 == 0.0
+
+
+def test_stale_search_penalty_resets_on_reaching_a_new_sector():
+    marines_home = [fake.marine(1, x=1, y=1)]
+    marines_far = [fake.marine(1, x=56, y=56)]
+    ts0 = fake.make_timestep(units=marines_home, minerals=0, food_cap=15)
+    ts1 = fake.make_timestep(units=marines_far, minerals=0, food_cap=15)  # newly visited sector
+    ts2 = fake.make_timestep(units=marines_far, minerals=0, food_cap=15)  # same sector, no progress
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.stale_search_penalty = 0.01
+    config.reward.stale_search_patience = 1
+    config.reward.exploration_bonus = 0.0  # isolate the stale-penalty counter from its own bonus
+    config.masking.min_marines_to_move = 1
+    env, _ = make_env([ts0, ts1, ts2], config)
+    env.reset()
+
+    _, r1, _, _, _ = env.step(FixedAction.NO_OP)  # entered a new sector -> counter reset to 0
+    assert r1 == 0.0
+    _, r2, _, _, _ = env.step(FixedAction.NO_OP)  # counter -> 1, still within patience
+    assert r2 == 0.0
+
+
 def test_step_info_exposes_per_component_reward_breakdown():
     # So an imbalance between components (e.g. kill-value outweighing a
     # loss) is directly inspectable instead of needing to be reasoned about
@@ -381,7 +446,7 @@ def test_step_info_exposes_per_component_reward_breakdown():
     assert info["reward_economic"] == 50.0
     assert set(info.keys()) == {
         "reward_terminal", "reward_economic", "reward_kill", "reward_home_defense",
-        "reward_scouting", "reward_exploration",
+        "reward_scouting", "reward_exploration", "reward_stale_search",
     }
     assert reward == sum(info.values())
 
@@ -399,7 +464,7 @@ def test_default_config_guarantees_any_win_outscores_a_heavily_shaped_loss():
     # Losing episode that racks up close to the maximum plausible shaping:
     # economic and kill value both driven to their caps, plus some scouting.
     enemies = [fake.enemy_unit(100 + i, fake.UNIT_MARINE, x=float(i * 10), y=1.0) for i in range(3)]
-    marines = [fake.marine(i, x=1, y=1) for i in range(4)]  # concentration_factor = 1.0
+    marines = [fake.marine(i, x=1, y=1) for i in range(20)]  # meets concentration_threshold -> factor = 1.0
     loss_ts0 = fake.make_timestep(units=marines, minerals=0, food_cap=15)
     loss_ts1 = fake.make_timestep(
         units=marines + enemies, minerals=0, food_cap=15, reward=-1.0, step_type="LAST",

@@ -29,13 +29,23 @@ class MaskConfig:
     supply_depot_minerals: int = 100
     barracks_minerals: int = 150
     marine_minerals: int = 50
-    # Concentration of Force: don't legalize move_army_to_sector_i actions
-    # until at least this many marines exist. Newly trained marines spawn
-    # near the home base, so while this gate is active they simply stay
-    # clustered at home (passive defense) rather than being sent out
-    # piecemeal -- this directly targets attacking/exploring with too few
-    # units to survive contact.
+    # Concentration of Force: don't legalize even a move/recall to the HOME
+    # sector until at least this many marines exist. Newly trained marines
+    # spawn near the home base, so while this gate is active they simply
+    # stay clustered at home (passive defense). Deliberately low -- just a
+    # "can the army move at all" floor, not "ready to go on offense"; see
+    # min_marines_to_advance for that.
     min_marines_to_move: int = 4
+    # Separate, higher bar for moving to any sector other than home --
+    # matches ScriptedPolicyConfig.attack_threshold, the BC teacher's own
+    # threshold for committing to a search-and-destroy offensive rather than
+    # holding position. A hard mask, not just a reward incentive: without
+    # it, nothing stopped the RL policy from sending the whole army into
+    # unexplored territory with only min_marines_to_move marines -- observed
+    # live as marines exploring too early with too few marines and dying
+    # immediately, which then taught the policy to avoid moving altogether
+    # rather than to wait for mass.
+    min_marines_to_advance: int = 20
 
     @staticmethod
     def from_dict(data: dict) -> "MaskConfig":
@@ -70,7 +80,9 @@ class RewardConfig:
     # a kill landed with a large army earns full credit while a kill landed
     # with a tiny, exposed squad earns much less -- discourages treating
     # opportunistic small-squad kills as a winning strategy on their own.
-    concentration_threshold: int = 4
+    # Matches MaskConfig.min_marines_to_advance -- both express "this is what
+    # counts as a real, committed fighting force" for this scenario.
+    concentration_threshold: int = 20
     # killed_value_units/killed_value_structures only ever increase (kills
     # aren't "undone"), so unlike economic value it is NOT offset by an
     # eventual loss -- observed in practice: a losing episode's ep_rew_mean
@@ -110,6 +122,18 @@ class RewardConfig:
     # independent of whether an enemy is there -- so covering new ground
     # itself has an ongoing payoff, not just finding something in it.
     exploration_bonus: float = 0.02
+    # Further counterweight to the same stalling problem exploration_bonus
+    # addresses: that bonus is one-time per sector, so once the army has
+    # visited what it's going to visit for a while, there is still nothing
+    # actively pulling it to keep moving -- observed live as a large army
+    # parking in one sector indefinitely once assembled ("a huge pile of
+    # marines in one location"). Flat per-step penalty once the army has
+    # gone stale_search_patience steps without entering a sector it hasn't
+    # been in before, applied only once movement is actually legal
+    # (min_marines_to_move marines) so standing at home during the early
+    # economy-building phase is never penalized.
+    stale_search_penalty: float = 0.01
+    stale_search_patience: int = 30
     # Multiplies PySC2's own terminal win/loss reward (+-1). Set well above
     # 1.0 deliberately: even with economic_value_cap and kill_value_cap in
     # place, a fully-built economy plus a long fight can still sum to a few

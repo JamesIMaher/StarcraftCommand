@@ -73,9 +73,12 @@ def test_move_actions_need_minimum_marine_count():
     # Concentration of Force: movement/attack is illegal below the
     # configured minimum marine count, not just "any marines at all" --
     # newly trained marines default to staying clustered at home until mass
-    # is reached, instead of being sent out piecemeal.
+    # is reached, instead of being sent out piecemeal. min_marines_to_advance
+    # pinned equal to min_marines_to_move here to isolate this general floor
+    # from the separate, higher home-vs-elsewhere split (see
+    # test_advancing_to_non_home_sectors_needs_higher_marine_count).
     spec = make_spec()
-    config = MaskingConfig(min_marines_to_move=4)
+    config = MaskingConfig(min_marines_to_move=4, min_marines_to_advance=4)
     state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
     mask = compute_action_masks(state, spec, config)
     assert not any(mask[spec.move_action_for_sector(s)] for s in range(spec.grid.num_sectors))
@@ -88,6 +91,33 @@ def test_move_actions_need_minimum_marine_count():
     state.marines.append(fake.marine(4))
     mask = compute_action_masks(state, spec, config)
     assert all(mask[spec.move_action_for_sector(s)] for s in range(spec.grid.num_sectors))
+
+
+def test_advancing_to_non_home_sectors_needs_higher_marine_count():
+    # Regression test: nothing previously stopped the RL policy from
+    # committing the whole army into unexplored territory with only
+    # min_marines_to_move marines -- confirmed live as marines exploring too
+    # early with too few marines and dying immediately. Moving to the HOME
+    # sector (e.g. recalling a scattered force, or defending) stays legal at
+    # the lower min_marines_to_move bar; every other sector needs the
+    # higher min_marines_to_advance bar.
+    spec = make_spec()
+    config = MaskingConfig(min_marines_to_move=4, min_marines_to_advance=20)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    for tag in range(4):
+        state.marines.append(fake.marine(tag))  # 4 marines: >= move floor, < advance floor
+
+    mask = compute_action_masks(state, spec, config)
+    home_action = spec.move_action_for_sector(0)
+    other_actions = [spec.move_action_for_sector(s) for s in range(1, spec.grid.num_sectors)]
+    assert mask[home_action]
+    assert not any(mask[a] for a in other_actions)
+
+    for tag in range(4, 20):
+        state.marines.append(fake.marine(tag))  # now 20: meets the advance floor too
+    mask = compute_action_masks(state, spec, config)
+    assert mask[home_action]
+    assert all(mask[a] for a in other_actions)
 
 
 def test_barracks_and_supply_depot_caps_respected():

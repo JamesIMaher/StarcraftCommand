@@ -14,6 +14,8 @@ import numpy as np
 from .action_space import ActionSpaceSpec, FixedAction
 from .game_state import GameState
 
+_HOME_SECTOR = 0  # canonical sector nearest home after SpawnOrientation mirroring
+
 
 @dataclass(frozen=True)
 class MaskingConfig:
@@ -22,11 +24,23 @@ class MaskingConfig:
     supply_depot_minerals: int = 100
     barracks_minerals: int = 150
     marine_minerals: int = 50
-    # Concentration of Force: below this many marines, movement/attack
-    # actions are illegal entirely. Newly trained marines spawn near home, so
-    # while blocked they simply stay clustered there (passive defense)
-    # instead of being sent out piecemeal.
+    # Concentration of Force: below this many marines, even moving/recalling
+    # to the HOME sector is illegal. Newly trained marines spawn near home,
+    # so while blocked they simply stay clustered there (passive defense)
+    # instead of being sent out piecemeal. Deliberately low -- this is only
+    # a "can the army move at all" floor, not a "ready to go on offense"
+    # threshold; see min_marines_to_advance for that.
     min_marines_to_move: int = 4
+    # Separate, higher bar for moving to any sector OTHER than home --
+    # mirrors ScriptedPolicyConfig.attack_threshold, which the BC teacher
+    # uses to hold position rather than committing to a search-and-destroy
+    # offensive until the army is a real fighting force. Without this as a
+    # hard mask (not just a reward incentive), nothing stopped the RL policy
+    # from committing the whole army into unexplored territory with only
+    # min_marines_to_move marines -- confirmed live as marines exploring too
+    # early with too few marines and dying immediately, which then taught
+    # the policy to avoid moving at all rather than to wait for mass.
+    min_marines_to_advance: int = 20
 
 
 def compute_action_masks(state: GameState, spec: ActionSpaceSpec, config: MaskingConfig) -> np.ndarray:
@@ -64,7 +78,9 @@ def compute_action_masks(state: GameState, spec: ActionSpaceSpec, config: Maskin
     mask[FixedAction.TRAIN_MARINE] = can_train_marine
 
     can_move = len(state.marines) >= config.min_marines_to_move
+    can_advance = len(state.marines) >= config.min_marines_to_advance
     for sector in range(spec.grid.num_sectors):
-        mask[spec.move_action_for_sector(sector)] = can_move
+        legal = can_move if sector == _HOME_SECTOR else can_advance
+        mask[spec.move_action_for_sector(sector)] = legal
 
     return mask

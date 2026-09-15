@@ -99,6 +99,7 @@ class SC2FightEnv(gym.Env):
             barracks_minerals=config.masking.barracks_minerals,
             marine_minerals=config.masking.marine_minerals,
             min_marines_to_move=config.masking.min_marines_to_move,
+            min_marines_to_advance=config.masking.min_marines_to_advance,
         )
         self._translator = ActionTranslator(self.action_spec)
         self._sc2_env = None
@@ -108,6 +109,7 @@ class SC2FightEnv(gym.Env):
         self._prev_kill_value = 0
         self._seen_enemy_sectors: set[int] = set()
         self._visited_sectors: set[int] = set()
+        self._steps_since_new_sector = 0
         self._last_reward_breakdown: dict[str, float] = {}
         self._orientation = SpawnOrientation(map_size=config.map_size, mirror_x=False, mirror_y=False)
 
@@ -146,6 +148,7 @@ class SC2FightEnv(gym.Env):
         # there, so it shouldn't pay an exploration bonus the first time
         # _exploration_bonus() runs.
         self._visited_sectors = {_HOME_SECTOR}
+        self._steps_since_new_sector = 0
         obs = featurize(self._state, self.grid, self.config.max_game_loop_norm, self._orientation)
         return obs, {}
 
@@ -211,11 +214,15 @@ class SC2FightEnv(gym.Env):
         reward_home_defense = 0.0
         reward_scouting = 0.0
         reward_exploration = 0.0
+        reward_stale_search = 0.0
         if self.config.reward.shaping_enabled:
             reward_economic, reward_kill = self._combat_shaping_reward()
             reward_home_defense = self._home_defense_penalty()
             reward_scouting = self._scouting_bonus()
+            visited_before = len(self._visited_sectors)
             reward_exploration = self._exploration_bonus()
+            made_progress = len(self._visited_sectors) > visited_before
+            reward_stale_search = self._stale_search_penalty(made_progress)
 
         self._last_reward_breakdown = {
             "reward_terminal": reward_terminal,
@@ -224,10 +231,11 @@ class SC2FightEnv(gym.Env):
             "reward_home_defense": reward_home_defense,
             "reward_scouting": reward_scouting,
             "reward_exploration": reward_exploration,
+            "reward_stale_search": reward_stale_search,
         }
         return (
-            reward_terminal + reward_economic + reward_kill
-            + reward_home_defense + reward_scouting + reward_exploration
+            reward_terminal + reward_economic + reward_kill + reward_home_defense
+            + reward_scouting + reward_exploration + reward_stale_search
         )
 
     def _combat_shaping_reward(self) -> tuple[float, float]:
@@ -322,6 +330,22 @@ class SC2FightEnv(gym.Env):
             return 0.0
         self._visited_sectors |= newly_visited
         return self.config.reward.exploration_bonus * len(newly_visited)
+
+    def _stale_search_penalty(self, made_progress: bool) -> float:
+        """See RewardConfig.stale_search_penalty -- a flat per-step penalty
+        once the army has gone too long without entering a new sector,
+        counteracting the fact that exploration_bonus/scouting_bonus are
+        both one-time and so eventually stop pulling the army onward."""
+        cfg = self.config.reward
+        if made_progress:
+            self._steps_since_new_sector = 0
+            return 0.0
+        self._steps_since_new_sector += 1
+        if len(self._state.marines) < self.config.masking.min_marines_to_move:
+            return 0.0  # not yet allowed to move at all -- holding position is correct
+        if self._steps_since_new_sector <= cfg.stale_search_patience:
+            return 0.0
+        return -cfg.stale_search_penalty
 
     def close(self):
         if self._sc2_env is not None:

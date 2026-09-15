@@ -22,6 +22,7 @@ _REWARD_COMPONENTS = (
     "reward_home_defense",
     "reward_scouting",
     "reward_exploration",
+    "reward_stale_search",
 )
 
 
