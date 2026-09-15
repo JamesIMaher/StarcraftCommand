@@ -72,6 +72,15 @@ def train(
         if bc_dataset:
             print(f"Pretraining via behavior cloning on {bc_dataset} ...")
             data = np.load(bc_dataset)
+            expected_obs_dim = vec_env.observation_space.shape[0]
+            dataset_obs_dim = data["observations"].shape[1]
+            if dataset_obs_dim != expected_obs_dim:
+                raise ValueError(
+                    f"BC dataset {bc_dataset} has {dataset_obs_dim}-dim observations but the current "
+                    f"environment produces {expected_obs_dim}-dim observations -- the observation "
+                    "features or grid size changed since it was collected. Re-collect it with "
+                    "`python -m sc2rl.training.collect_demonstrations` against the current config."
+                )
             pretrain_with_behavior_cloning(
                 model, data["observations"], data["actions"], data["masks"], epochs=bc_epochs,
             )

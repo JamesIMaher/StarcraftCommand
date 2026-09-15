@@ -361,6 +361,40 @@ def test_scouting_bonus_awarded_once_per_newly_seen_enemy_sector():
     assert second_reward == 0.0  # same sector already seen this episode
 
 
+def test_observation_remembers_explored_sectors_across_steps_even_with_shaping_off():
+    # The `explored` per-sector feature is episode memory the env maintains:
+    # once a marine has been in a sector it stays flagged after the marine
+    # leaves, and the memory must update whether or not reward shaping is on
+    # (it used to live inside the exploration-bonus reward code).
+    from sc2rl.env.observation import FEATURES_PER_SECTOR, observation_length
+
+    ts0 = fake.make_timestep(units=[fake.marine(1, x=1, y=1)], minerals=0, food_cap=15)
+    ts1 = fake.make_timestep(units=[fake.marine(1, x=56, y=56)], minerals=0, food_cap=15)
+    ts2 = fake.make_timestep(units=[fake.marine(1, x=1, y=1)], minerals=0, food_cap=15)  # back home
+    config = EnvConfig()
+    config.reward.shaping_enabled = False
+    env, _ = make_env([ts0, ts1, ts2], config)
+    obs0, _ = env.reset()
+
+    def explored_flag(obs, sector):
+        global_len = observation_length(env.grid) - FEATURES_PER_SECTOR * env.grid.num_sectors
+        return obs[global_len + FEATURES_PER_SECTOR * sector + 5]
+
+    far = env.grid.num_sectors - 1
+    assert explored_flag(obs0, 0) == 1.0  # home is explored from the start
+    assert explored_flag(obs0, far) == 0.0
+
+    obs1, _, _, _, _ = env.step(FixedAction.NO_OP)
+    assert explored_flag(obs1, far) == 1.0
+
+    obs2, _, _, _, _ = env.step(FixedAction.NO_OP)
+    assert explored_flag(obs2, far) == 1.0  # still remembered after leaving
+    assert explored_flag(obs2, 0) == 1.0
+
+    obs_after_reset, _ = env.reset()
+    assert explored_flag(obs_after_reset, far) == 0.0  # memory is per-episode
+
+
 def test_exploration_bonus_awarded_once_per_newly_visited_sector():
     ts0 = fake.make_timestep(units=[fake.marine(1, x=1, y=1)], minerals=0, food_cap=15)  # home sector
     ts1 = fake.make_timestep(units=[fake.marine(1, x=56, y=56)], minerals=0, food_cap=15)  # far sector

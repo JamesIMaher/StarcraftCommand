@@ -27,6 +27,28 @@ _UNIT_HATCHERY = 86
 
 _BUILD_COMPLETE_PROGRESS = 1.0
 
+# raw_units has no "is this a structure" flag, so structures are recognized
+# by unit type. Values are pysc2.lib.units.{Zerg,Terran,Protoss} enum members
+# (pysc2 is deliberately not imported here -- see the module docstring), so
+# the observation can tell "an enemy building is known here" apart from a
+# transient enemy unit passing through. Structures previously seen and now
+# in fog stay in raw_units as display_type=Snapshot entries, so a known
+# structure persists in the observation until the area is re-seen without
+# it -- the same information a human gets from the minimap.
+_STRUCTURE_TYPES = frozenset({
+    # Zerg
+    86, 100, 101, 88, 89, 90, 97, 96, 98, 99, 139, 140, 91, 504, 94, 92, 102, 95, 142, 93, 87, 137, 138,
+    # Terran
+    18, 36, 132, 134, 130, 19, 47, 20, 21, 46, 38, 37, 22, 24, 23, 25, 27, 43, 40, 39, 26, 28, 44, 42, 41,
+    29, 30, 6, 5,
+    # Protoss
+    59, 60, 61, 62, 133, 63, 72, 66, 1910, 71, 70, 67, 64, 65, 68, 69,
+})
+
+
+def is_structure_type(unit_type: int) -> bool:
+    return unit_type in _STRUCTURE_TYPES
+
 # Indices into obs.observation.score_cumulative (pysc2's
 # features.ScoreCumulative enum) -- the game engine maintains these itself
 # every step, so reward shaping can read them directly instead of us
@@ -65,6 +87,10 @@ class UnitInfo:
     def health_fraction(self) -> float:
         return self.health_ratio / 255.0
 
+    @property
+    def is_structure(self) -> bool:
+        return is_structure_type(self.unit_type)
+
 
 @dataclass
 class GameState:
@@ -99,6 +125,10 @@ class GameState:
     @property
     def complete_barracks(self) -> list[UnitInfo]:
         return [u for u in self.barracks if u.is_complete]
+
+    @property
+    def enemy_structures(self) -> list[UnitInfo]:
+        return [u for u in self.enemies if u.is_structure]
 
     @property
     def command_center_pos(self) -> tuple[float, float] | None:

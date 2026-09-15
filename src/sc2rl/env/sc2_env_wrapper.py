@@ -109,6 +109,7 @@ class SC2FightEnv(gym.Env):
         self._prev_kill_value = 0
         self._seen_enemy_sectors: set[int] = set()
         self._visited_sectors: set[int] = set()
+        self._newly_visited_this_step: set[int] = set()
         self._steps_since_new_sector = 0
         self._home_defense_total = 0.0
         self._stale_search_total = 0.0
@@ -147,14 +148,29 @@ class SC2FightEnv(gym.Env):
         self._prev_kill_value = self._state.killed_value_units + self._state.killed_value_structures
         self._seen_enemy_sectors = set()
         # Home sector counts as already "visited" at spawn -- marines start
-        # there, so it shouldn't pay an exploration bonus the first time
-        # _exploration_bonus() runs.
+        # there, so it shouldn't pay an exploration bonus (or read as
+        # unexplored in the observation) the first time it's checked.
         self._visited_sectors = {_HOME_SECTOR}
+        self._newly_visited_this_step: set[int] = set()
         self._steps_since_new_sector = 0
         self._home_defense_total = 0.0
         self._stale_search_total = 0.0
-        obs = featurize(self._state, self.grid, self.config.max_game_loop_norm, self._orientation)
-        return obs, {}
+        return self._featurize(), {}
+
+    def _featurize(self) -> np.ndarray:
+        return featurize(
+            self._state, self.grid, self.config.max_game_loop_norm, self._orientation,
+            explored_sectors=self._visited_sectors,
+        )
+
+    def _record_visited_sectors(self) -> None:
+        """Episode memory of which sectors a marine has been in. Updated on
+        every step regardless of reward shaping, because the observation
+        reads it too (the `explored` per-sector feature) -- not just the
+        exploration bonus."""
+        present_this_step = {self._sector_of(u.x, u.y) for u in self._state.marines}
+        self._newly_visited_this_step = present_this_step - self._visited_sectors
+        self._visited_sectors |= self._newly_visited_this_step
 
     def _sector_of(self, x: float, y: float) -> int:
         cx, cy = self._orientation.to_canonical(x, y)
@@ -182,8 +198,9 @@ class SC2FightEnv(gym.Env):
 
         self._state = GameState.from_observation(ts)
         self._tick_cooldowns(action)
+        self._record_visited_sectors()
 
-        obs = featurize(self._state, self.grid, self.config.max_game_loop_norm, self._orientation)
+        obs = self._featurize()
         reward = self._compute_reward(ts)
         terminated = bool(ts.last())
         truncated = False
@@ -223,10 +240,8 @@ class SC2FightEnv(gym.Env):
             reward_economic, reward_kill = self._combat_shaping_reward()
             reward_home_defense = self._home_defense_penalty()
             reward_scouting = self._scouting_bonus()
-            visited_before = len(self._visited_sectors)
             reward_exploration = self._exploration_bonus()
-            made_progress = len(self._visited_sectors) > visited_before
-            reward_stale_search = self._stale_search_penalty(made_progress)
+            reward_stale_search = self._stale_search_penalty(made_progress=bool(self._newly_visited_this_step))
 
         self._last_reward_breakdown = {
             "reward_terminal": reward_terminal,
@@ -343,13 +358,9 @@ class SC2FightEnv(gym.Env):
         """Counterweight to home_defense_penalty -- see the comment on
         RewardConfig.exploration_bonus. One-time reward the first time a
         friendly marine is present in a given sector during this episode,
-        independent of whether an enemy is there."""
-        present_this_step = {self._sector_of(u.x, u.y) for u in self._state.marines}
-        newly_visited = present_this_step - self._visited_sectors
-        if not newly_visited:
-            return 0.0
-        self._visited_sectors |= newly_visited
-        return self.config.reward.exploration_bonus * len(newly_visited)
+        independent of whether an enemy is there. The memory itself is
+        maintained by _record_visited_sectors() in step()."""
+        return self.config.reward.exploration_bonus * len(self._newly_visited_this_step)
 
     def _stale_search_penalty(self, made_progress: bool) -> float:
         """See RewardConfig.stale_search_penalty -- a flat per-step penalty

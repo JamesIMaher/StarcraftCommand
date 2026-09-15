@@ -5,9 +5,24 @@ Expands on the old repo's 9 global scalars with per-sector spatial density
 the movement action space, so the network actually has the spatial context its
 movement decisions need -- the old repo's action space was spatial but its
 inputs were not.
+
+Two of the per-sector features are "minimap memory" rather than a snapshot
+of the current step:
+  - known enemy structures: buildings the player has seen. PySC2 keeps a
+    previously-seen structure in raw_units as a display_type=Snapshot entry
+    while it's in fog, so this persists until the area is re-seen without it
+    -- exactly what a human reads off the minimap.
+  - explored: whether a friendly marine has been in that sector this
+    episode. Tracked by the env (it's episode state, not part of any single
+    GameState) and passed in. Without it the policy has no way to tell an
+    empty sector it has already swept from one it has never looked at, so it
+    can't do a systematic search -- observed live as the army missing enemy
+    buildings in sectors it simply never visited.
 """
 
 from __future__ import annotations
+
+from typing import Collection
 
 import numpy as np
 
@@ -22,10 +37,17 @@ _SUPPLY_DEPOT_COUNT_NORM = 8.0
 _BARRACKS_COUNT_NORM = 8.0
 _ENEMY_COUNT_NORM = 50.0
 _SECTOR_COUNT_NORM = 10.0
+_SECTOR_STRUCTURE_NORM = 5.0
+
+FEATURES_PER_SECTOR = 6
 
 
 def featurize(
-    state: GameState, grid: SectorGrid, max_game_loop: int, orientation: SpawnOrientation
+    state: GameState,
+    grid: SectorGrid,
+    max_game_loop: int,
+    orientation: SpawnOrientation,
+    explored_sectors: Collection[int] = (),
 ) -> np.ndarray:
     features: list[float] = []
 
@@ -70,6 +92,7 @@ def featurize(
     sector_friendly_health = [0.0] * grid.num_sectors
     sector_enemy_count = [0] * grid.num_sectors
     sector_enemy_health = [0.0] * grid.num_sectors
+    sector_enemy_structures = [0] * grid.num_sectors
 
     for unit in state.marines:
         cx, cy = orientation.to_canonical(unit.x, unit.y)
@@ -82,12 +105,17 @@ def featurize(
         s = grid.sector_of(cx, cy)
         sector_enemy_count[s] += 1
         sector_enemy_health[s] += unit.health_fraction
+        if unit.is_structure:
+            sector_enemy_structures[s] += 1
 
+    explored = set(explored_sectors)
     for s in range(grid.num_sectors):
         features.append(min(sector_friendly_count[s] / _SECTOR_COUNT_NORM, 1.0))
         features.append(min(sector_friendly_health[s] / _SECTOR_COUNT_NORM, 1.0))
         features.append(min(sector_enemy_count[s] / _SECTOR_COUNT_NORM, 1.0))
         features.append(min(sector_enemy_health[s] / _SECTOR_COUNT_NORM, 1.0))
+        features.append(min(sector_enemy_structures[s] / _SECTOR_STRUCTURE_NORM, 1.0))
+        features.append(1.0 if s in explored else 0.0)
 
     return np.array(features, dtype=np.float32)
 

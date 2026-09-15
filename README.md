@@ -38,10 +38,31 @@ running StarCraft II client (see "Status" below).
 into a flat `float32` vector: ~19 global scalars (minerals, supply
 used/cap/headroom, marine count + average health, SCV count, supply
 depot/barracks counts -- in-progress and complete, visible enemy count +
-health, enemy race one-hot, episode-progress fraction) plus 4 features per
-grid sector (friendly/enemy count and average health in that sector) for a
-6x6 grid -- 163 floats total at the default grid size (`env.grid`,
-configurable). This is a `gymnasium.spaces.Box(0.0, 1.0, shape=(163,))`.
+health, enemy race one-hot, episode-progress fraction) plus 6 features per
+grid sector for a 6x6 grid -- 235 floats total at the default grid size
+(`env.grid`, configurable). This is a
+`gymnasium.spaces.Box(0.0, 1.0, shape=(235,))`. Four of the per-sector
+features are a snapshot of the current step (friendly/enemy count and
+average health in that sector); the other two are **minimap memory**:
+
+- *known enemy structures*: enemy buildings the player has seen in that
+  sector. PySC2 keeps a previously-seen structure in `raw_units` as a
+  `display_type=Snapshot` entry while it's back in fog, so a discovered
+  building persists here until the area is re-seen without it -- exactly
+  what a human reads off the minimap, not extra information. Structures
+  are recognized by unit type (`game_state.py`), since `raw_units` has no
+  is-structure flag.
+- *explored*: whether a friendly marine has been in that sector this
+  episode (the home sector counts from the start). This is episode state
+  the env maintains, not part of any single `GameState`. Without it the
+  policy had no way to tell an empty sector it had already swept from one
+  it had never looked at, so it couldn't do a systematic search -- observed
+  live as the army leaving enemy buildings standing in sectors it simply
+  never visited.
+
+Changing the observation layout invalidates any previously collected BC
+dataset; `train.py` refuses a `--bc-dataset` whose observation width doesn't
+match the current environment rather than silently training on garbage.
 
 **Home-relative sectors.** Maps like `Simple64` randomize which corner each
 side spawns in between episodes (confirmed empirically: resets within the
@@ -86,8 +107,8 @@ still only needs the lower `min_marines_to_move` bar.
 
 **Neural network.** `MaskablePPO`'s default `MlpPolicy`
 (`sb3_contrib.common.maskable.policies.MaskableActorCriticPolicy`) is two
-small separate PyTorch MLPs reading the same 83-dim input: a **policy head**
-(2 hidden layers x 64 units, `Tanh` activation, outputting 20 logits -> the
+small separate PyTorch MLPs reading the same 235-dim input: a **policy head**
+(2 hidden layers x 64 units, `Tanh` activation, outputting 40 logits -> the
 per-action probabilities after masking) and a **value head** (same shape,
 outputting a single scalar -- the estimated value of the current state).
 There's no shared trunk and no CNN/spatial convolution -- the input is
@@ -282,7 +303,7 @@ pip install -e . --no-deps
 
 `sb3-contrib` auto-selects CUDA if `torch.cuda.is_available()` -- no config
 needed. That said, don't expect a big speedup here: the policy/value
-networks are tiny (2x64-unit MLPs over an 83-dim vector), so the actual
+networks are tiny (2x64-unit MLPs over a 235-dim vector), so the actual
 matrix-multiply work is trivial either way. The real bottleneck is the
 StarCraft II client itself stepping the game forward each action -- a
 single-threaded, real-time-simulation cost that a GPU doesn't touch at all.
@@ -412,6 +433,13 @@ python -m sc2rl.training.train --config configs/default.yaml --bc-dataset demons
 applied so an imitated-but-illegal action never gets credit) before
 `.learn()` starts -- mutually exclusive with `--resume-from`, since a
 resumed checkpoint already has trained weights.
+
+A dataset is tied to the observation layout it was collected under: any
+change to `observation.py`'s features or to `env.grid` changes the vector
+width, and `train.py` will refuse the stale dataset with a message saying to
+re-collect. Old checkpoints are likewise incompatible after such a change
+(the network's input layer is sized to the observation), so start a fresh
+run rather than `--resume-from`.
 
 ## Running a trained agent
 

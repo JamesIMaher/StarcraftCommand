@@ -37,6 +37,18 @@ def test_from_observation_sorts_units_by_alliance_and_type():
     assert len(state.enemies) == 1
 
 
+def test_enemy_structures_recognized_by_unit_type():
+    ts = fake.make_timestep(units=[
+        fake.enemy_unit(1, fake.UNIT_HATCHERY),
+        fake.enemy_unit(2, fake.UNIT_MARINE),
+        fake.enemy_unit(3, fake.UNIT_NEXUS),
+    ])
+    state = GameState.from_observation(ts)
+    assert len(state.enemies) == 3
+    assert [u.tag for u in state.enemy_structures] == [1, 3]
+    assert not state.enemies[1].is_structure
+
+
 def test_enemy_command_center_marks_terran_race():
     ts = fake.make_timestep(units=[fake.enemy_unit(1, fake.UNIT_COMMAND_CENTER)])
     state = GameState.from_observation(ts)

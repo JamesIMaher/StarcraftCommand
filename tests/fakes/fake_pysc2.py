@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from sc2rl.env.game_state import is_structure_type
+
 ALLIANCE_SELF = 1
 ALLIANCE_ENEMY = 4
 
@@ -50,6 +52,10 @@ class FakeUnit:
     @property
     def health_fraction(self) -> float:
         return self.health_ratio / 255.0
+
+    @property
+    def is_structure(self) -> bool:
+        return is_structure_type(self.unit_type)
 
 
 @dataclass
