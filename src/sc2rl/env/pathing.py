@@ -34,6 +34,11 @@ class PathingMap:
         return self._pathable.shape
 
     @property
+    def grid(self) -> np.ndarray:
+        """The bool [y][x] array itself (read-only use), for diagnostics."""
+        return self._pathable
+
+    @property
     def cell_count(self) -> int:
         return int(self._pathable.sum())
 

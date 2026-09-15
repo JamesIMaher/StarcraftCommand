@@ -7,6 +7,9 @@ env:
   build_cooldown_steps: 3
   max_game_loop_norm: 20000
   visualize: false
+  # One-time ASCII dump of the pathing grid / units / sector targets at the
+  # first reset -- see EnvConfig.pathing_debug_path.
+  pathing_debug_path: pathing_debug.txt
   # The grid is laid over the map's PLAYABLE area (read from the game at
   # reset), which on Simple64 is a ~43x43 square in the raw frame. 6x6 (36
   # sectors) gives ~7.1x7.1 cells, half-diagonal ~5 -- comfortably within a

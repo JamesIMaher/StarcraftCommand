@@ -215,6 +215,12 @@ class EnvConfig:
     build_cooldown_steps: int = 3
     max_game_loop_norm: int = 20000
     visualize: bool = False
+    # If set, the env writes a one-time ASCII map here at the first reset:
+    # the pathing grid (unpathable / pathable-but-unreachable / reachable),
+    # the command center, marines, the grid bounds and every sector's chosen
+    # attack target -- all in the raw frame -- so a coordinate-frame or
+    # reachability problem can be seen instead of guessed at.
+    pathing_debug_path: str | None = None
     grid: GridConfig = field(default_factory=GridConfig)
     masking: MaskConfig = field(default_factory=MaskConfig)
     reward: RewardConfig = field(default_factory=RewardConfig)
@@ -235,6 +241,7 @@ class EnvConfig:
             "build_cooldown_steps": defaults.build_cooldown_steps,
             "max_game_loop_norm": defaults.max_game_loop_norm,
             "visualize": defaults.visualize,
+            "pathing_debug_path": defaults.pathing_debug_path,
         }
         scalar_fields.update(data)
         return EnvConfig(grid=grid, masking=masking, reward=reward, **scalar_fields)

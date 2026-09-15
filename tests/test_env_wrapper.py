@@ -536,6 +536,34 @@ def test_unreachable_sectors_are_masked_pre_explored_and_targets_are_pathable():
     assert abs(targets[5][0] - 24) <= 1.0 and abs(targets[5][1] - 24) <= 1.0
 
 
+def test_pathing_debug_map_is_written_once_when_configured(tmp_path):
+    import numpy as np
+
+    pathable = np.ones((64, 64), dtype=bool)
+    pathable[47, 47:64] = False
+    pathable[47:64, 47] = False
+    base = [fake.command_center(99, x=30, y=30)]
+    ts0 = fake.make_timestep(units=base + [fake.marine(1, x=31, y=31)], minerals=0, food_cap=15, pathable=pathable)
+    config = EnvConfig()
+    config.grid.cols = config.grid.rows = 4
+    config.pathing_debug_path = str(tmp_path / "pathing_debug.txt")
+    env, _ = make_env([ts0, ts0], config)
+    env.reset()
+
+    text = (tmp_path / "pathing_debug.txt").read_text(encoding="utf-8")
+    assert "unreachable sectors = [15]" in text
+    assert "command center raw = (30.0, 30.0)" in text
+    import re
+
+    rows = [m.group(1) for m in (re.match(r"^\s*\d+ ([#~.CmTE]{64})$", line) for line in text.splitlines()) if m]
+    assert len(rows) == 64
+    assert rows[30][30] == "C"
+    assert rows[31][31] == "m"
+    assert rows[50][50] == "~"  # pathable plateau, cut off from the base
+    assert rows[47][50] == "#"  # the wall
+    assert rows[5][5] == "."
+
+
 def test_scouting_bonus_awarded_once_per_newly_seen_enemy_sector():
     ts0 = fake.make_timestep(minerals=0, food_cap=15)  # no enemies visible yet
     ts1 = fake.make_timestep(units=[fake.enemy_unit(1, fake.UNIT_MARINE, x=56, y=56)], minerals=0, food_cap=15)

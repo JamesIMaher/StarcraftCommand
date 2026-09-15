@@ -119,6 +119,7 @@ class SC2FightEnv(gym.Env):
         self._approach_pos_total = 0.0
         self._approach_neg_total = 0.0
         self._pathing: PathingMap | None = None
+        self._raw_pathing: PathingMap | None = None
         self._unreachable_sectors: set[int] = set()
         self._reported_unreachable = False
         self._last_reward_breakdown: dict[str, float] = {}
@@ -160,7 +161,7 @@ class SC2FightEnv(gym.Env):
         self._cooldowns[:] = 0
         self._state = GameState.from_observation(timesteps[0])
         self._orientation = self._compute_orientation(self._state)
-        self._pathing = self._read_pathing(timesteps[0])
+        self._pathing = self._raw_pathing = self._read_pathing(timesteps[0])
         if self._pathing is not None and self._state.command_center_pos is not None:
             # Only ground actually connected to the base counts -- see pathing.py.
             self._pathing = self._pathing.reachable_from(*self._state.command_center_pos)
@@ -230,7 +231,52 @@ class SC2FightEnv(gym.Env):
                 f"center; sectors with no reachable ground (never move targets): "
                 f"{sorted(self._unreachable_sectors) or 'none'}"
             )
+            if self.config.pathing_debug_path:
+                self._write_pathing_debug(self.config.pathing_debug_path, targets)
+                print(f"[env] wrote pathing debug map to {self.config.pathing_debug_path}")
             self._reported_unreachable = True
+
+    def _write_pathing_debug(self, path: str, targets: list[tuple[float, float] | None]) -> None:
+        """ASCII map in the raw frame, row 0 at the top (y = 0), one character
+        per cell: '#' unpathable, '~' pathable but not reachable from the
+        base, '.' reachable, 'C' command center, 'm' marine, 'T' a sector's
+        attack target, 'E' enemy structure. See EnvConfig.pathing_debug_path."""
+        h, w = self._raw_pathing.shape
+        canvas = [["#" if not self._raw_pathing.grid[y, x] else ("." if self._pathing.grid[y, x] else "~")
+                   for x in range(w)] for y in range(h)]
+
+        def stamp(x: float, y: float, ch: str) -> None:
+            ix, iy = int(x), int(y)
+            if 0 <= ix < w and 0 <= iy < h:
+                canvas[iy][ix] = ch
+
+        for t in targets:
+            if t is not None:
+                stamp(t[0], t[1], "T")
+        for u in self._state.enemy_structures:
+            stamp(u.x, u.y, "E")
+        for u in self._state.marines:
+            stamp(u.x, u.y, "m")
+        if self._state.command_center_pos is not None:
+            stamp(*self._state.command_center_pos, "C")
+
+        lines = [
+            f"raw frame {w}x{h}; grid bounds (min_x, min_y, max_x, max_y) = {self.grid.bounds}",
+            f"orientation mirror_x={self._orientation.mirror_x} mirror_y={self._orientation.mirror_y}",
+            f"command center raw = {self._state.command_center_pos}; home sector = {self._home_sector()}",
+            f"reachable cells = {self._pathing.cell_count} of {self._raw_pathing.cell_count} pathable",
+            f"unreachable sectors = {sorted(self._unreachable_sectors)}",
+            "sector -> canonical center -> world target:",
+        ]
+        for s, t in enumerate(targets):
+            cx, cy = self.grid.sector_center(s)
+            wx, wy = self._orientation.to_world(cx, cy)
+            lines.append(f"  {s:2d}: canon ({cx:5.1f},{cy:5.1f}) world ({wx:5.1f},{wy:5.1f}) -> {t}")
+        lines.append("")
+        lines.append("    " + "".join(str(x % 10) for x in range(w)))
+        lines.extend(f"{y:3d} " + "".join(row) for y, row in enumerate(canvas))
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
 
     def _featurize(self) -> np.ndarray:
         return featurize(
