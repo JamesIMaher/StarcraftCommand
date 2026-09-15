@@ -463,6 +463,7 @@ def test_stale_search_penalty_applies_once_patience_exceeded_without_new_sector(
     config.reward.stale_search_penalty = 0.01
     config.reward.stale_search_patience = 2
     config.masking.min_marines_to_move = 1
+    config.masking.min_marines_to_advance = 1
     env, _ = make_env(timesteps, config)
     env.reset()
 
@@ -476,15 +477,21 @@ def test_stale_search_penalty_applies_once_patience_exceeded_without_new_sector(
     assert r3 == -0.01
 
 
-def test_stale_search_penalty_silent_before_army_can_legally_move():
-    # Standing at home during the early economy-building phase (below
-    # min_marines_to_move) must never be penalized -- that is correct,
-    # required behavior, not stalling.
-    ts = fake.make_timestep(minerals=0, food_cap=15)  # no marines at all
+def test_stale_search_penalty_silent_before_army_can_legally_leave_home():
+    # Standing at home while the army is still too small to advance (below
+    # min_marines_to_advance) must never be penalized -- that is correct,
+    # required behavior, not stalling. Regression test: this used to gate on
+    # the lower min_marines_to_move, so marines 4..19 were a penalty stream
+    # the policy could only stop by never building the 4th marine -- and it
+    # learned exactly that.
+    marines = [fake.marine(i, x=1, y=1) for i in range(10)]  # >= move floor, < advance floor
+    ts = fake.make_timestep(units=marines, minerals=0, food_cap=15)
     config = EnvConfig()
     config.reward.shaping_enabled = True
     config.reward.stale_search_penalty = 0.01
     config.reward.stale_search_patience = 0
+    config.masking.min_marines_to_move = 4
+    config.masking.min_marines_to_advance = 20
     env, _ = make_env([ts, ts, ts], config)
     env.reset()
     _, r1, _, _, _ = env.step(FixedAction.NO_OP)
@@ -505,6 +512,7 @@ def test_stale_search_penalty_resets_on_reaching_a_new_sector():
     config.reward.stale_search_patience = 1
     config.reward.exploration_bonus = 0.0  # isolate the stale-penalty counter from its own bonus
     config.masking.min_marines_to_move = 1
+    config.masking.min_marines_to_advance = 1
     env, _ = make_env([ts0, ts1, ts2], config)
     env.reset()
 
@@ -525,6 +533,7 @@ def test_stale_search_penalty_capped_per_episode():
     config.reward.stale_search_patience = 0
     config.reward.stale_search_penalty_cap = 0.03  # exactly 3 firings of 0.01
     config.masking.min_marines_to_move = 1
+    config.masking.min_marines_to_advance = 1
     env, _ = make_env(timesteps, config)
     env.reset()
 

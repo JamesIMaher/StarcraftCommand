@@ -130,7 +130,7 @@ already the flat engineered feature vector above, not raw pixels, so a small
 MLP is all that's needed.
 
 **Training algorithm (PPO).** Each training iteration: (1) roll out
-`n_steps` (256 by default) actions in the live environment using the current
+`n_steps` (2048 by default) actions in the live environment using the current
 policy, recording observations/actions/rewards/masks/value estimates; (2)
 compute advantages via Generalized Advantage Estimation (GAE, `gamma` /
 `gae_lambda`); (3) run `n_epochs` passes of minibatch (`batch_size`) gradient
@@ -141,6 +141,24 @@ encourages exploration). This is what actually updates the PyTorch weights
 -- `model.learn()` in `src/sc2rl/training/train.py` runs this loop, and it's
 the same net_arch/algorithm regardless of CPU or GPU (`sb3-contrib` picks
 the device automatically via `device="auto"`).
+
+The PPO settings in `configs/default.yaml` deliberately differ from SB3's
+defaults because of two things about this problem: episodes have no step
+limit and run thousands of steps, and the policy starts from a
+behavior-cloned initialization worth preserving. `n_steps` is 2048 (a
+256-step rollout almost never contained an episode end, so every update
+was bootstrapping from a mid-game value estimate), `gamma` is 0.995 (at
+0.99 the ~100-step discount horizon shrank the +-10 terminal reward to
+~0.05 by the time credit reached the decisions that decide a game --
+smaller than the immediate dense shaping terms, which the policy then
+optimized instead), `learning_rate` is 1e-4 (at 3e-4 fine-tuning was
+observed to win a few early episodes and then drift steadily worse), and
+`ent_coef` is 0.02. That entropy bonus is the built-in "randomization": it
+penalizes a peaked action distribution so the policy keeps sampling
+alternatives. If a run collapses into a do-nothing local minimum, check
+`train/entropy_loss` in the console output -- trending toward 0 means the
+policy has become near-deterministic and stopped exploring, and raising
+`ent_coef` is the first lever.
 
 **Reward.** PySC2's own terminal win/loss reward (+1/-1/0), passed straight
 through, plus optional dense per-step shaping (`env.reward.shaping_enabled`,

@@ -386,8 +386,13 @@ class SC2FightEnv(gym.Env):
             self._steps_since_new_sector = 0
             return 0.0
         self._steps_since_new_sector += 1
-        if len(self._state.marines) < self.config.masking.min_marines_to_move:
-            return 0.0  # not yet allowed to move at all -- holding position is correct
+        if len(self._state.marines) < self.config.masking.min_marines_to_advance:
+            # Not yet allowed to leave home, so holding position is the only
+            # legal (and correct) thing to do. This used to gate on the lower
+            # min_marines_to_move, which made marines 4..19 a penalty stream
+            # the policy had no legal way to stop -- observed live as it
+            # learning to build a few marines and then never any more.
+            return 0.0
         if self._steps_since_new_sector <= cfg.stale_search_patience:
             return 0.0
         if self._stale_search_total >= cfg.stale_search_penalty_cap:

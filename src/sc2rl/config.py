@@ -139,9 +139,12 @@ class RewardConfig:
     # parking in one sector indefinitely once assembled ("a huge pile of
     # marines in one location"). Flat per-step penalty once the army has
     # gone stale_search_patience steps without entering a sector it hasn't
-    # been in before, applied only once movement is actually legal
-    # (min_marines_to_move marines) so standing at home during the early
-    # economy-building phase is never penalized.
+    # been in before, applied only once leaving home is actually legal
+    # (min_marines_to_advance marines) so standing at home during the early
+    # economy-building phase is never penalized. It must gate on the
+    # advance threshold, not the lower min_marines_to_move: gating on the
+    # latter penalized marines 4..19 every step with no legal way to stop
+    # it, and the policy learned to build a few marines and then no more.
     stale_search_penalty: float = 0.01
     stale_search_patience: int = 30
     # Same unbounded-episode-length reasoning as home_defense_penalty_cap --
@@ -212,14 +215,37 @@ class EnvConfig:
 @dataclass
 class PPOConfig:
     total_timesteps: int = 200_000
-    learning_rate: float = 3e-4
-    n_steps: int = 256
+    # Lower than SB3's 3e-4 default on purpose: the policy starts from a
+    # behavior-cloned initialization worth preserving, and at 3e-4 RL
+    # fine-tuning was observed to win a few early episodes and then drift
+    # steadily worse, i.e. overwrite what BC had taught faster than RL could
+    # re-learn it.
+    learning_rate: float = 1e-4
+    # Episodes have no step limit and typically run into the thousands of
+    # steps, so a 256-step rollout almost never contains an episode end --
+    # every update was bootstrapping from the value estimate of a mid-game
+    # state, and the terminal win/loss signal only reached the policy via
+    # that estimate. 2048 still doesn't cover a whole episode but sees far
+    # more of one per update.
+    n_steps: int = 2048
     batch_size: int = 64
     n_epochs: int = 10
-    gamma: float = 0.99
+    # Discount horizon ~1/(1-gamma): 0.99 is ~100 steps, but the decisions
+    # that decide a game (build the army, leave home, sweep the map) happen
+    # hundreds of steps before the terminal reward. At 0.99 that +-10 is
+    # discounted to ~0.05 by the time credit reaches them -- smaller than
+    # the immediate dense shaping terms, so the policy optimized those
+    # instead. 0.995 is a ~200-step horizon.
+    gamma: float = 0.995
     gae_lambda: float = 0.95
     clip_range: float = 0.2
-    ent_coef: float = 0.01
+    # The entropy bonus is the built-in "randomization": it penalizes a
+    # peaked action distribution so the policy keeps sampling alternatives.
+    # Watch train/entropy_loss in the console -- trending toward 0 means the
+    # policy has collapsed to near-deterministic choices and stopped
+    # exploring. Raised from 0.01 after observing exactly that collapse into
+    # a do-nothing local minimum.
+    ent_coef: float = 0.02
     seed: int | None = None
 
     @staticmethod
