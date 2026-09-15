@@ -97,11 +97,18 @@ on by default) built from real PySC2 signals -- `obs.observation.score_cumulativ
 and per-sector unit presence -- rather than invented heuristics:
 
 - **Economic value delta** (`total_value_units` + `total_value_structures`,
-  uncapped): rises as you train marines *and* as you complete supply
-  depots/barracks, falls when units die. Always fully rewarded/penalized.
-  Including structures matters -- without it, building a barracks earned no
-  immediate reward (only its eventual marines did), which showed up in
-  practice as the policy learning to delay barracks construction.
+  capped at `economic_value_cap`, default `4000`): rises as you train
+  marines *and* as you complete supply depots/barracks, falls when units
+  die. Including structures matters -- without it, building a barracks
+  earned no immediate reward (only its eventual marines did), which showed
+  up in practice as the policy learning to delay barracks construction. The
+  cap matters separately: structures are already bounded by
+  `masking.max_supply_depots`/`max_barracks`, but marine count has no upper
+  limit, so without a cap a policy can farm this reward indefinitely by
+  hoarding marines it never risks in combat -- confirmed live, a losing
+  episode earned +2.85 in economic reward alone this way. Growth below the
+  cap is fully rewarded; past it, growing the army further earns nothing
+  more.
 - **Kill value, scaled by Concentration of Force AND discounted**:
   `killed_value_units` + `killed_value_structures` delta, multiplied by both
   `min(1, marine_count / concentration_threshold)` (a kill landed with a
@@ -331,6 +338,7 @@ All under `env:` in `configs/default.yaml`:
 | `masking.min_marines_to_move` | `4` | Movement/attack actions illegal below this many marines |
 | `reward.shaping_enabled` | `true` | Master on/off switch for everything below |
 | `reward.shaping_coefficient` | `0.001` | Scales the army-value and kill-value shaping terms |
+| `reward.economic_value_cap` | `4000.0` | Ceiling on economic value used for the reward -- prevents indefinite hoarding |
 | `reward.concentration_threshold` | `4` | Marine count for full kill-reward credit; scaled down below it |
 | `reward.kill_value_scale` | `0.1` | Additional discount on kill-value credit, on top of concentration scaling |
 | `reward.home_defense_penalty` | `0.05` | Per-step penalty while home is undefended and under attack |

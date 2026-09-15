@@ -54,6 +54,17 @@ class RewardConfig:
     # terminal +-1 win/loss reward rather than swamping it; treat it as a
     # starting point to tune, not a tuned value.
     shaping_coefficient: float = 0.001
+    # Ceiling on (total_value_units + total_value_structures) used for the
+    # economic-value reward -- growing past this earns no further reward.
+    # Structures are already capped by masking.max_supply_depots/
+    # max_barracks, but marine count has no upper limit, so without this a
+    # policy can farm reward indefinitely by hoarding marines it never risks
+    # in combat (confirmed live: a losing episode earned +2.85 in economic
+    # reward alone). ~4000 generously covers a fully-built base (~400 for 8
+    # SCVs, ~2000 for maxed-out depots/barracks/command center) plus a real
+    # ~25-marine fighting force (~1250) -- comfortably enough to reward
+    # building a real force, not enough to reward hoarding past one.
+    economic_value_cap: float = 4000.0
     # Mass / Concentration of Force: the killed_value portion of the shaping
     # reward is scaled by min(1, marine_count / concentration_threshold), so
     # a kill landed with a large army earns full credit while a kill landed

@@ -20,6 +20,7 @@ env:
   reward:
     shaping_enabled: true
     shaping_coefficient: 0.001
+    economic_value_cap: 4000.0
     concentration_threshold: 4
     kill_value_scale: 0.1
     home_defense_penalty: 0.05

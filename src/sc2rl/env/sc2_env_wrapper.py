@@ -235,7 +235,21 @@ class SC2FightEnv(gym.Env):
         total_value = self._state.total_value_units + self._state.total_value_structures
         kill_value = self._state.killed_value_units + self._state.killed_value_structures
 
-        army_delta = total_value - self._prev_total_value
+        # Structures are already bounded by max_supply_depots/max_barracks,
+        # but marine count has no upper limit in the masking -- so
+        # total_value_units can climb indefinitely as long as minerals keep
+        # flowing, with ZERO requirement to ever risk those marines in
+        # combat. Confirmed live: a losing episode earned +2.85 in economic
+        # reward alone (total_value grew by ~2850 raw), because marines that
+        # never engage also never die. Capping the value used for the delta
+        # means growing the army past a generously large-but-bounded ceiling
+        # earns no further reward -- removes the incentive to hoard
+        # indefinitely while still fully rewarding building a real fighting
+        # force. _prev_total_value itself stays uncapped/raw so the delta
+        # math stays correct across the boundary.
+        capped_current = min(total_value, cfg.economic_value_cap)
+        capped_prev = min(self._prev_total_value, cfg.economic_value_cap)
+        army_delta = capped_current - capped_prev
         kill_delta = kill_value - self._prev_kill_value
         concentration_factor = min(1.0, len(self._state.marines) / max(cfg.concentration_threshold, 1))
 

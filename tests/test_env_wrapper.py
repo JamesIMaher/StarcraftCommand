@@ -150,6 +150,36 @@ def test_reward_shaping_rewards_rising_army_value_regardless_of_marine_count():
     assert reward == 50.0  # army-value delta is never scaled by concentration
 
 
+def test_economic_value_capped_to_prevent_indefinite_hoarding():
+    # Regression test: confirmed live that a losing episode earned +2.85 in
+    # economic reward alone, because marines that never engage also never
+    # die, so total_value_units can grow without bound. Growth below the cap
+    # is still fully rewarded; growth past it earns nothing further.
+    ts0 = fake.make_timestep(minerals=0, food_cap=15, total_value_units=90)
+    ts1 = fake.make_timestep(minerals=0, food_cap=15, reward=0.0, total_value_units=150)
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.shaping_coefficient = 1.0
+    config.reward.economic_value_cap = 100.0
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
+    assert reward == 10.0  # only the 90 -> 100 portion counts, not 90 -> 150
+
+
+def test_economic_value_growth_earns_nothing_once_already_past_the_cap():
+    ts0 = fake.make_timestep(minerals=0, food_cap=15, total_value_units=200)  # already over the cap
+    ts1 = fake.make_timestep(minerals=0, food_cap=15, reward=0.0, total_value_units=300)
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.shaping_coefficient = 1.0
+    config.reward.economic_value_cap = 100.0
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
+    assert reward == 0.0
+
+
 def test_reward_shaping_rewards_building_structures_not_just_training_units():
     # Regression test: building a supply depot/barracks previously earned
     # zero immediate shaped reward (only total_value_units was tracked) --
