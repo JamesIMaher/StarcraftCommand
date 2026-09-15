@@ -59,11 +59,15 @@ class FakePlayer:
     food_cap: int = 15
 
 
+_SCORE_CUMULATIVE_LEN = 13  # matches pysc2 features.ScoreCumulative
+
+
 @dataclass
 class FakeObservation:
     raw_units: list = field(default_factory=list)
     player: FakePlayer = field(default_factory=FakePlayer)
     game_loop: list = field(default_factory=lambda: [0])
+    score_cumulative: list = field(default_factory=lambda: [0] * _SCORE_CUMULATIVE_LEN)
 
 
 @dataclass
@@ -87,12 +91,20 @@ def make_timestep(
     game_loop: int = 0,
     reward: float = 0.0,
     step_type: str = "MID",
+    total_value_units: int = 0,
+    killed_value_units: int = 0,
+    killed_value_structures: int = 0,
 ) -> FakeTimeStep:
+    score = [0] * _SCORE_CUMULATIVE_LEN
+    score[3] = total_value_units
+    score[5] = killed_value_units
+    score[6] = killed_value_structures
     return FakeTimeStep(
         observation=FakeObservation(
             raw_units=units or [],
             player=FakePlayer(minerals=minerals, food_used=food_used, food_cap=food_cap),
             game_loop=[game_loop],
+            score_cumulative=score,
         ),
         reward=reward,
         step_type=step_type,

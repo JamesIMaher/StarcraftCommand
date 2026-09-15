@@ -108,15 +108,26 @@ def test_reward_shaping_disabled_by_default_matches_terminal_reward_only():
     assert reward == 0.0  # shaping off by default, mid-episode reward stays 0
 
 
-def test_reward_shaping_enabled_rewards_growing_army_value():
-    ts0 = fake.make_timestep(units=[fake.marine(1, x=1, y=1)], minerals=0, food_cap=15)
-    ts1 = fake.make_timestep(
-        units=[fake.marine(1, x=1, y=1), fake.marine(2, x=1, y=1)], minerals=0, food_cap=15, reward=0.0,
-    )
+def test_reward_shaping_enabled_rewards_rising_combat_score():
+    ts0 = fake.make_timestep(minerals=0, food_cap=15, total_value_units=50)
+    ts1 = fake.make_timestep(minerals=0, food_cap=15, reward=0.0, total_value_units=100, killed_value_units=25)
     config = EnvConfig()
     config.reward.shaping_enabled = True
     config.reward.shaping_coefficient = 1.0
     env, _ = make_env([ts0, ts1], config)
     env.reset()
     obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
-    assert reward > 0.0
+    # delta = (100 + 25) - 50 = 75, times coefficient 1.0
+    assert reward == 75.0
+
+
+def test_reward_shaping_penalizes_falling_combat_score():
+    ts0 = fake.make_timestep(minerals=0, food_cap=15, total_value_units=100)
+    ts1 = fake.make_timestep(minerals=0, food_cap=15, reward=0.0, total_value_units=50)  # a marine died
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.shaping_coefficient = 1.0
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
+    assert reward == -50.0

@@ -39,7 +39,13 @@ class MaskConfig:
 @dataclass
 class RewardConfig:
     shaping_enabled: bool = False
-    shaping_coefficient: float = 0.01
+    # combat_score (GameState.combat_score) is a raw mineral-equivalent value
+    # -- it can accumulate into the hundreds or more over a full episode as
+    # marines get built and enemies get killed. This coefficient is scaled
+    # down accordingly so the summed shaping reward over an episode stays
+    # roughly comparable to the terminal +-1 win/loss reward rather than
+    # swamping it; treat it as a starting point to tune, not a tuned value.
+    shaping_coefficient: float = 0.001
 
     @staticmethod
     def from_dict(data: dict) -> "RewardConfig":

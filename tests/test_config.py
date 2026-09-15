@@ -6,7 +6,7 @@ def test_default_yaml_loads_and_matches_defaults():
     assert config.env.map_name == "Simple64"
     assert config.env.grid.cols == 4
     assert config.env.grid.rows == 4
-    assert config.env.reward.shaping_enabled is False
+    assert config.env.reward.shaping_enabled is True
     assert config.training.ppo.total_timesteps == 200000
 
 

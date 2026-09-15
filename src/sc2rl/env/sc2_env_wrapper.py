@@ -101,8 +101,7 @@ class SC2FightEnv(gym.Env):
         self._sc2_env = None
         self._state: GameState | None = None
         self._cooldowns = np.zeros(self.action_spec.num_actions, dtype=np.int32)
-        self._prev_friendly_value = 0.0
-        self._prev_enemy_value = 0.0
+        self._prev_combat_score = 0
 
         self.action_space = spaces.Discrete(self.action_spec.num_actions)
         obs_len = observation_length(self.grid)
@@ -118,8 +117,7 @@ class SC2FightEnv(gym.Env):
         timesteps = self._sc2_env.reset()
         self._cooldowns[:] = 0
         self._state = GameState.from_observation(timesteps[0])
-        self._prev_friendly_value = self._army_value(friendly=True)
-        self._prev_enemy_value = self._army_value(friendly=False)
+        self._prev_combat_score = self._state.combat_score
         obs = featurize(self._state, self.grid, self.config.max_game_loop_norm)
         return obs, {}
 
@@ -158,19 +156,17 @@ class SC2FightEnv(gym.Env):
         if taken_action in (FixedAction.BUILD_SUPPLY_DEPOT, FixedAction.BUILD_BARRACKS):
             self._cooldowns[taken_action] = self.config.build_cooldown_steps
 
-    def _army_value(self, friendly: bool) -> float:
-        units = self._state.marines if friendly else self._state.enemies
-        return sum(u.health_fraction for u in units)
-
     def _compute_reward(self, ts) -> float:
         reward = float(ts.reward)
         if self.config.reward.shaping_enabled and not ts.last():
-            friendly_value = self._army_value(friendly=True)
-            enemy_value = self._army_value(friendly=False)
-            delta = (friendly_value - self._prev_friendly_value) - (enemy_value - self._prev_enemy_value)
+            # combat_score = total_value_units + killed_value_units +
+            # killed_value_structures, all maintained by the game engine
+            # itself (see GameState.combat_score) -- rises as you train and
+            # keep marines and deal damage, falls as your own units die.
+            current = self._state.combat_score
+            delta = current - self._prev_combat_score
             reward += self.config.reward.shaping_coefficient * delta
-            self._prev_friendly_value = friendly_value
-            self._prev_enemy_value = enemy_value
+            self._prev_combat_score = current
         return reward
 
     def close(self):

@@ -27,6 +27,15 @@ _UNIT_HATCHERY = 86
 
 _BUILD_COMPLETE_PROGRESS = 1.0
 
+# Indices into obs.observation.score_cumulative (pysc2's
+# features.ScoreCumulative enum) -- the game engine maintains these itself
+# every step, so reward shaping can read them directly instead of us
+# re-deriving something weaker (e.g. summing unit health ourselves misses
+# kills and economy entirely).
+_SCORE_TOTAL_VALUE_UNITS = 3
+_SCORE_KILLED_VALUE_UNITS = 5
+_SCORE_KILLED_VALUE_STRUCTURES = 6
+
 
 @dataclass(frozen=True)
 class UnitInfo:
@@ -62,6 +71,9 @@ class GameState:
     minerals: int
     food_used: int
     food_cap: int
+    total_value_units: int = 0
+    killed_value_units: int = 0
+    killed_value_structures: int = 0
 
     scvs: list[UnitInfo] = field(default_factory=list)
     marines: list[UnitInfo] = field(default_factory=list)
@@ -97,14 +109,25 @@ class GameState:
     def supply_headroom(self) -> int:
         return self.food_cap - self.food_used
 
+    @property
+    def combat_score(self) -> int:
+        """Rises as you build/keep units and kill enemy units/structures;
+        falls when your own units die. Used as the per-step reward-shaping
+        signal -- see sc2_env_wrapper.py."""
+        return self.total_value_units + self.killed_value_units + self.killed_value_structures
+
     @classmethod
     def from_observation(cls, obs) -> "GameState":
         player = obs.observation.player
+        score = obs.observation.score_cumulative
         state = cls(
             game_loop=int(obs.observation.game_loop[0]),
             minerals=int(player.minerals),
             food_used=int(player.food_used),
             food_cap=int(player.food_cap),
+            total_value_units=int(score[_SCORE_TOTAL_VALUE_UNITS]),
+            killed_value_units=int(score[_SCORE_KILLED_VALUE_UNITS]),
+            killed_value_structures=int(score[_SCORE_KILLED_VALUE_STRUCTURES]),
         )
         for unit in obs.observation.raw_units:
             info = UnitInfo(

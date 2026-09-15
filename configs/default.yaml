@@ -17,8 +17,8 @@ env:
     barracks_minerals: 150
     marine_minerals: 50
   reward:
-    shaping_enabled: false
-    shaping_coefficient: 0.01
+    shaping_enabled: true
+    shaping_coefficient: 0.001
 
 training:
   checkpoint_dir: checkpoints
