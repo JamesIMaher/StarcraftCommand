@@ -33,7 +33,9 @@ class FakeUnit:
     x: float = 0.0
     y: float = 0.0
     health: float = 45.0
-    health_max: float = 45.0
+    # Matches real raw_units, which has no health_max field -- only absolute
+    # `health` and `health_ratio` (int(health / health_max * 255)). 255 = full health.
+    health_ratio: int = 255
     build_progress: float = 1.0
     order_length: int = 0
 
@@ -47,7 +49,7 @@ class FakeUnit:
 
     @property
     def health_fraction(self) -> float:
-        return self.health / self.health_max if self.health_max else 0.0
+        return self.health_ratio / 255.0
 
 
 @dataclass
@@ -104,24 +106,25 @@ def scv(tag: int, x: float = 0.0, y: float = 0.0, idle: bool = True) -> FakeUnit
     )
 
 
-def marine(tag: int, x: float = 0.0, y: float = 0.0, health: float = 45.0) -> FakeUnit:
+def marine(tag: int, x: float = 0.0, y: float = 0.0, health: float = 45.0,
+           health_ratio: int = 255) -> FakeUnit:
     return FakeUnit(
         tag=tag, unit_type=UNIT_MARINE, alliance=ALLIANCE_SELF, x=x, y=y,
-        health=health, health_max=45.0,
+        health=health, health_ratio=health_ratio,
     )
 
 
 def enemy_unit(tag: int, unit_type: int, x: float = 0.0, y: float = 0.0,
-                health: float = 45.0, health_max: float = 45.0) -> FakeUnit:
+                health: float = 45.0, health_ratio: int = 255) -> FakeUnit:
     return FakeUnit(
         tag=tag, unit_type=unit_type, alliance=ALLIANCE_ENEMY, x=x, y=y,
-        health=health, health_max=health_max,
+        health=health, health_ratio=health_ratio,
     )
 
 
 def command_center(tag: int, x: float = 0.0, y: float = 0.0) -> FakeUnit:
     return FakeUnit(tag=tag, unit_type=UNIT_COMMAND_CENTER, alliance=ALLIANCE_SELF, x=x, y=y,
-                     health=1500.0, health_max=1500.0)
+                     health=1500.0, health_ratio=255)
 
 
 def supply_depot(tag: int, x: float = 0.0, y: float = 0.0, complete: bool = True) -> FakeUnit:
@@ -131,5 +134,5 @@ def supply_depot(tag: int, x: float = 0.0, y: float = 0.0, complete: bool = True
 
 def barracks(tag: int, x: float = 0.0, y: float = 0.0, complete: bool = True) -> FakeUnit:
     return FakeUnit(tag=tag, unit_type=UNIT_BARRACKS, alliance=ALLIANCE_SELF, x=x, y=y,
-                     health=1000.0, health_max=1000.0,
+                     health=1000.0, health_ratio=255,
                      build_progress=1.0 if complete else 0.5)

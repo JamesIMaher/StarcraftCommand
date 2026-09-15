@@ -35,7 +35,11 @@ class UnitInfo:
     x: float
     y: float
     health: float
-    health_max: float
+    # PySC2's raw_units exposes no health_max field -- only absolute `health`
+    # and `health_ratio`, an int(health / health_max * 255) already computed
+    # by the game client (see pysc2 features.py). health_fraction below just
+    # rescales that back to [0, 1].
+    health_ratio: int
     build_progress: float
     order_length: int
 
@@ -49,7 +53,7 @@ class UnitInfo:
 
     @property
     def health_fraction(self) -> float:
-        return self.health / self.health_max if self.health_max else 0.0
+        return self.health_ratio / 255.0
 
 
 @dataclass
@@ -109,7 +113,7 @@ class GameState:
                 x=float(unit.x),
                 y=float(unit.y),
                 health=float(unit.health),
-                health_max=float(unit.health_max),
+                health_ratio=int(unit.health_ratio),
                 build_progress=float(unit.build_progress),
                 order_length=int(unit.order_length),
             )

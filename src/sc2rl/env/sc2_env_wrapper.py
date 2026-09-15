@@ -9,8 +9,11 @@ class's step()/reset() contract against a stubbed SC2Env instead of a real one.
 
 from __future__ import annotations
 
+import sys
+
 import numpy as np
 import gymnasium as gym
+from absl import flags
 from gymnasium import spaces
 from pysc2.env import sc2_env
 from pysc2.lib import actions as sc2_actions
@@ -18,6 +21,14 @@ from pysc2.lib import features
 
 from ..config import EnvConfig
 from .action_masking import MaskingConfig, compute_action_masks
+
+# pysc2's run_configs module reads absl flags (e.g. --sc2_run_config) and
+# raises if they were never parsed. Our CLI entrypoints use argparse, not
+# absl.app.run(), so nothing parses them otherwise -- parse with just the
+# program name (no extra args) so pysc2's internals are satisfied without
+# absl trying to interpret our own argparse flags.
+if not flags.FLAGS.is_parsed():
+    flags.FLAGS(sys.argv[:1])
 from .action_space import ActionSpaceSpec, FixedAction
 from .action_translation import ActionTranslator
 from .game_state import GameState
