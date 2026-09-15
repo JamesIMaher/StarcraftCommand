@@ -40,8 +40,8 @@ used/cap/headroom, marine count + average health, SCV count, supply
 depot/barracks counts -- in-progress and complete, visible enemy count +
 health, enemy race one-hot, episode-progress fraction) plus 4 features per
 grid sector (friendly/enemy count and average health in that sector) for a
-4x4 grid -- 83 floats total at the default grid size. This is a
-`gymnasium.spaces.Box(0.0, 1.0, shape=(83,))`.
+6x6 grid -- 163 floats total at the default grid size (`env.grid`,
+configurable). This is a `gymnasium.spaces.Box(0.0, 1.0, shape=(163,))`.
 
 **Home-relative sectors.** Maps like `Simple64` randomize which corner each
 side spawns in between episodes (confirmed empirically: resets within the
@@ -56,13 +56,21 @@ actually spawned in. Without this, the same action index meant opposite
 things in different games and the policy could never learn a stable
 explore-toward-the-enemy or return-to-defend behavior.
 
-**Action space.** A flat `Discrete(20)`: `no_op`, `build_supply_depot`,
+**Action space.** A flat `Discrete(40)`: `no_op`, `build_supply_depot`,
 `build_barracks`, `train_marine`, plus one `move_army_to_sector_i` per grid
-cell (16 at the default 4x4 grid). `action_masking.py` computes which of
-these are legal each step (afford checks, unit existence, per-type caps) --
-illegal actions never get sampled at all rather than resolving to a silent
-no-op, because `MaskablePPO` zeroes out their probability directly in the
-action distribution before sampling. Movement/attack actions specifically
+cell (36 at the default 6x6 grid). Grid resolution is a real
+coverage/thoroughness tradeoff, not just a display detail: on a 64x64 map, a
+4x4 grid's 16x16 cells have a half-diagonal (~11.3) beyond a marine's sight
+range (~9) -- confirmed live as the cause of enemy buildings tucked in a
+cell corner going undetected during search-and-destroy (see
+`env/scripted_policy.py`). 6x6's ~10.7x10.7 cells (half-diagonal ~7.5) fit
+comfortably within sight range; going finer still improves coverage further
+but costs more sectors to sweep within an episode's step budget.
+`action_masking.py` computes which actions are legal each step (afford
+checks, unit existence, per-type caps) -- illegal actions never get sampled
+at all rather than resolving to a silent no-op, because `MaskablePPO` zeroes
+out their probability directly in the action distribution before sampling.
+Movement/attack actions specifically
 stay illegal until `masking.min_marines_to_move` marines exist (**Mass /
 Concentration of Force**) -- newly trained marines spawn near home, so while
 blocked they default to passive defense there rather than being committed
@@ -351,7 +359,7 @@ python -m sc2rl.inference.play --checkpoint checkpoints/final_model --episodes 5
   both overridable).
 - Action space: `no_op`, `build_supply_depot`, `build_barracks`,
   `train_marine`, plus one `move_army_to_sector_i` per grid cell (default
-  4x4 = 16 cells) -- 20 actions total.
+  6x6 = 36 cells) -- 40 actions total.
 - Reward: PySC2's own terminal win/loss reward plus dense shaping, on by
   default (see "How it works" above for the individual terms).
 - Single environment (`DummyVecEnv` with one `SC2FightEnv`). StarCraft II's

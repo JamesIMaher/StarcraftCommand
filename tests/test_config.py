@@ -4,8 +4,8 @@ from sc2rl.config import Config
 def test_default_yaml_loads_and_matches_defaults():
     config = Config.from_yaml("configs/default.yaml")
     assert config.env.map_name == "Simple64"
-    assert config.env.grid.cols == 4
-    assert config.env.grid.rows == 4
+    assert config.env.grid.cols == 6
+    assert config.env.grid.rows == 6
     assert config.env.reward.shaping_enabled is True
     assert config.training.ppo.total_timesteps == 200000
 
