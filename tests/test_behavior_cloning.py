@@ -40,7 +40,7 @@ def test_behavior_cloning_reduces_loss_on_a_learnable_pattern(capsys):
     printed = capsys.readouterr().out
     epoch_lines = [line for line in printed.splitlines() if line.startswith("BC pretrain epoch")]
     losses = [float(line.split("loss=")[1].split()[0]) for line in epoch_lines]
-    held_out = [float(line.split("held_out_loss=")[1]) for line in epoch_lines]
+    held_out = [float(line.split("held_out_loss=")[1].split()[0]) for line in epoch_lines]
     assert len(losses) == 15
     assert losses[-1] < losses[0] * 0.5  # meaningfully reduced, not just noise
     assert held_out[-1] < held_out[0] * 0.5  # the held-out block follows the same learnable pattern
@@ -50,6 +50,37 @@ def test_behavior_cloning_reduces_loss_on_a_learnable_pattern(capsys):
     action_b, _ = model.predict(obs_b, deterministic=True)
     assert int(action_a) == target_a
     assert int(action_b) == target_b
+
+
+def test_behavior_cloning_keeps_the_best_held_out_epoch_not_the_last(capsys):
+    # Training data and the contiguous held-out block follow CONFLICTING
+    # rules for the same observation, so the more the policy fits the
+    # training block the worse the held-out loss gets after the first
+    # epoch or two. The policy must end up with the early, better weights.
+    model = _build_model()
+    obs_dim = model.observation_space.shape[0]
+    num_actions = model.action_space.n
+
+    n = 200
+    observations = np.ones((n, obs_dim), dtype=np.float32)
+    actions = np.full(n, 2, dtype=np.int64)
+    actions[-20:] = 7  # the held-out 10% says "7" where training says "2"
+    masks = np.ones((n, num_actions), dtype=bool)
+
+    pretrain_with_behavior_cloning(model, observations, actions, masks, epochs=12, batch_size=32, learning_rate=1e-2)
+
+    printed = capsys.readouterr().out
+    kept = [line for line in printed.splitlines() if line.startswith("BC pretrain: keeping epoch")]
+    assert len(kept) == 1
+    best_epoch = int(kept[0].split("epoch ")[1].split()[0])
+    assert best_epoch < 12  # not simply the last epoch
+
+    # The kept weights are the best held-out epoch's, so the held-out
+    # target keeps meaningfully more probability than the fully overfit
+    # final epoch would have left it.
+    epoch_lines = [line for line in printed.splitlines() if line.startswith("BC pretrain epoch")]
+    held_out = [float(line.split("held_out_loss=")[1].split()[0]) for line in epoch_lines]
+    assert min(held_out) < held_out[-1]
 
 
 def test_behavior_cloning_respects_action_masking():

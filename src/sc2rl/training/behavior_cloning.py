@@ -38,7 +38,15 @@ def pretrain_with_behavior_cloning(
 
     The split is by contiguous block, not a random shuffle: consecutive
     steps of one game are near-duplicates, so a shuffled split leaks the
-    training set into the held-out set and reports a flattering number."""
+    training set into the held-out set and reports a flattering number.
+
+    Early stopping: the weights from the epoch with the best held-out loss
+    are what the policy ends up with, not the last epoch's. Confirmed
+    necessary on a real 52k-sample dataset: held-out loss bottomed at
+    ~0.195 around epoch 7 and then climbed to ~0.38 by epoch 30 while the
+    training loss kept falling -- RL was warm-starting from an overfit
+    policy that was worse than the one from twenty epochs earlier. So
+    `epochs` is a budget, not a target."""
     policy = model.policy
     optimizer = th.optim.Adam(policy.parameters(), lr=learning_rate)
     dataset_size = len(observations)
@@ -57,6 +65,10 @@ def pretrain_with_behavior_cloning(
             obs_batch, actions_tensor[batch_idx], action_masks=masks_tensor[batch_idx],
         )
         return -log_prob.mean()
+
+    best_val_loss = float("inf")
+    best_epoch = 0
+    best_state = None
 
     for epoch in range(epochs):
         permutation = np.random.permutation(train_size)
@@ -79,4 +91,12 @@ def pretrain_with_behavior_cloning(
                     for s in range(0, validation_size, batch_size)
                 ) / validation_size
             line += f"  held_out_loss={val_loss:.4f}"
+            if val_loss < best_val_loss:
+                best_val_loss, best_epoch = val_loss, epoch + 1
+                best_state = {k: v.detach().clone() for k, v in policy.state_dict().items()}
+                line += "  (best so far)"
         print(line)
+
+    if best_state is not None:
+        policy.load_state_dict(best_state)
+        print(f"BC pretrain: keeping epoch {best_epoch} weights (held_out_loss={best_val_loss:.4f})")
