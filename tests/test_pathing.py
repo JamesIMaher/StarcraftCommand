@@ -55,6 +55,46 @@ def test_nearest_within_searches_a_square_around_the_point():
     assert pm.nearest_within(4.0, 4.0, 2.0) is None
 
 
+def test_prefer_interior_avoids_cliff_edge_cells():
+    # A 3-wide pathable strip: its middle column is interior, its two outer
+    # columns border unpathable ground. The nearest cell to a point just
+    # outside the strip is an edge cell; with prefer_interior the interior
+    # column wins even though it's farther.
+    pathable = np.zeros((10, 10), dtype=bool)
+    pathable[:, 3:6] = True
+    pm = PathingMap(pathable)
+    assert pm.nearest_pathable(7.0, 5.5, (0, 0, 10, 10)) == (5.5, 5.5)
+    assert pm.nearest_pathable(7.0, 5.5, (0, 0, 10, 10), prefer_interior=True) == (4.5, 5.5)
+
+
+def test_prefer_interior_still_returns_an_edge_cell_when_nothing_else_exists():
+    pathable = np.zeros((10, 10), dtype=bool)
+    pathable[5, 5] = True
+    pm = PathingMap(pathable)
+    assert pm.nearest_pathable(0.0, 0.0, (0, 0, 10, 10), prefer_interior=True) == (5.5, 5.5)
+
+
+def test_same_level_snapping_prefers_the_plateau_over_the_cliff_foot():
+    # A building on a plateau (height 200) whose footprint is unpathable,
+    # with low ground (height 100) directly below it across a cliff line.
+    # The Euclidean-nearest reachable cell is on the low ground; the target
+    # must instead be the plateau cell beside the building.
+    pathable = np.ones((20, 20), dtype=bool)
+    height = np.full((20, 20), 100, dtype=np.int32)
+    height[:10, :] = 200  # rows 0..9 are the plateau
+    pathable[10, :] = False  # cliff line between the levels
+    pathable[10, 0] = True  # a ramp at the far left keeps both levels connected
+    pathable[4:10, 4:17] = False  # a wide building's footprint, right at the plateau's edge
+    pm = PathingMap(pathable, height).reachable_from(15.0, 15.0)
+    structure = (10.0, 8.5)  # its center, inside the footprint
+    ref = pm.height_at(*structure)
+    assert ref == 200
+    low = pm.nearest_within(*structure, 6.0)
+    assert low[1] >= 11  # nearest by distance: just below the cliff (3 away vs 5 to the plateau row above)
+    same_level = pm.nearest_within(*structure, 6.0, same_level_as=ref)
+    assert same_level[1] < 4  # on the plateau, above the building
+
+
 def test_is_pathable_is_false_outside_the_map():
     pm = PathingMap(np.ones((10, 10), dtype=bool))
     assert pm.is_pathable(3.2, 4.9)

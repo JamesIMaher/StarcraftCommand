@@ -196,7 +196,12 @@ class SC2FightEnv(gym.Env):
         feature_minimap = getattr(ts.observation, "feature_minimap", None)
         if feature_minimap is None:
             return None
-        return PathingMap(np.asarray(feature_minimap[features.MINIMAP_FEATURES.pathable.index]) > 0)
+        pathable = np.asarray(feature_minimap[features.MINIMAP_FEATURES.pathable.index]) > 0
+        try:
+            height = np.asarray(feature_minimap[features.MINIMAP_FEATURES.height_map.index])
+        except (KeyError, IndexError, TypeError):
+            height = None
+        return PathingMap(pathable, height)
 
     def _compute_sector_targets(self) -> None:
         """Per-sector attack target = the pathable point nearest the sector's
@@ -220,7 +225,12 @@ class SC2FightEnv(gym.Env):
                 cx0 + grid.cell_width, cy0 + grid.cell_height,
             )
             rect = (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
-            target = self._pathing.nearest_pathable(*orientation.to_world(*grid.sector_center(sector)), rect)
+            # Interior cells only when there are any: a cliff-edge cell is
+            # ambiguous about which level it's on and sends the army to
+            # stand at the foot of a cliff.
+            target = self._pathing.nearest_pathable(
+                *orientation.to_world(*grid.sector_center(sector)), rect, prefer_interior=True,
+            )
             targets.append(target)
             if target is None:
                 self._unreachable_sectors.add(sector)
@@ -275,6 +285,22 @@ class SC2FightEnv(gym.Env):
         lines.append("")
         lines.append("    " + "".join(str(x % 10) for x in range(w)))
         lines.extend(f"{y:3d} " + "".join(row) for y, row in enumerate(canvas))
+        if self._raw_pathing.height is not None:
+            lines.append("")
+            lines.append("height_map // 16 (one hex digit per cell; '#' unpathable):")
+            height = self._raw_pathing.height
+            lines.append("    " + "".join(str(x % 10) for x in range(w)))
+            for y in range(h):
+                row = "".join(
+                    f"{min(int(height[y, x]) // 16, 15):x}" if self._raw_pathing.grid[y, x] else "#"
+                    for x in range(w)
+                )
+                lines.append(f"{y:3d} {row}")
+            for u in self._state.enemy_structures:
+                lines.append(f"enemy structure {u.unit_type} at raw ({u.x},{u.y}) height {self._raw_pathing.height_at(u.x, u.y)}")
+            if self._state.command_center_pos is not None:
+                cc = self._state.command_center_pos
+                lines.append(f"command center height {self._raw_pathing.height_at(*cc)}")
         with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
 

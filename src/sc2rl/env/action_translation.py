@@ -160,7 +160,12 @@ class ActionTranslator:
         for structure in sorted(in_sector, key=lambda u: (u.x - army_x) ** 2 + (u.y - army_y) ** 2):
             if self.pathing is None:
                 return structure.x, structure.y
-            snapped = self.pathing.nearest_within(structure.x, structure.y, self._STRUCTURE_SNAP_RADIUS)
+            # Same terrain level as the building: the Euclidean-nearest
+            # reachable cell is often at the foot of the cliff below it.
+            snapped = self.pathing.nearest_within(
+                structure.x, structure.y, self._STRUCTURE_SNAP_RADIUS,
+                same_level_as=self.pathing.height_at(structure.x, structure.y),
+            )
             if snapped is not None:
                 return snapped
         # Every known structure here is out of reach (e.g. high ground with

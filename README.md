@@ -137,9 +137,18 @@ the army to park at the cliff's edge. And *pathable* isn't *reachable*: the
 layer marks cliff-top plateaus and isolated pockets as pathable even with
 no ramp to them, so "nearest pathable cell" still picked ground the army
 could never stand on (both confirmed live as marines "trying to reach
-areas they can't reach"). A known enemy structure's target is likewise
-snapped to the nearest reachable ground beside it (its own footprint is
-unpathable, and it may be on high ground). A sector with no reachable
+areas they can't reach"). And *reachable* still isn't enough: Simple64 is
+two plateaus with cliff lines between them, and the Euclidean-nearest
+reachable cell to a point on a plateau is often at the *foot* of the cliff
+directly below it -- legal, reachable, wrong level. Marines sent there
+stand under the cliff with no vision of the building above, and since that
+building never dies the teacher re-targets the sector forever (confirmed
+live as the army piling up under a different map edge each game). So a
+known enemy structure's target is snapped to the nearest reachable ground
+*on the same terrain level* as the structure, using the minimap
+`height_map` layer (its own footprint is unpathable), and a sector's sweep
+target prefers interior cells over cliff-edge cells, which are ambiguous
+about which level they belong to. A sector with no reachable
 ground at all is removed from the action space for the episode
 (`SC2FightEnv.unreachable_sectors`) and pre-marked explored so no
 exploration incentive points at it; the env prints the reachable cell

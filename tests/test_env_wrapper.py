@@ -530,7 +530,10 @@ def test_unreachable_sectors_are_masked_pre_explored_and_targets_are_pathable():
 
     targets = env._translator.sector_targets
     assert targets[15] is None
-    assert targets[0] == (3.5, 7.5)  # nearest pathable cell to the (8, 8) center, inside the strip
+    # Nearest INTERIOR cell to the (8, 8) center inside the x < 4 strip: the
+    # strip's outer columns (x=0 at the map border, x=3 beside the wall) are
+    # cliff-edge cells and lose to the interior ones even though x=3 is nearer.
+    assert targets[0] in ((2.5, 7.5), (2.5, 8.5))
     # Fully pathable sector: a cell within one unit of its own (24, 24) center
     # (which sits on a cell corner, so several cells tie at equal distance).
     assert abs(targets[5][0] - 24) <= 1.0 and abs(targets[5][1] - 24) <= 1.0

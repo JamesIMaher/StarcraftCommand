@@ -107,6 +107,7 @@ def make_timestep(
     killed_value_units: int = 0,
     killed_value_structures: int = 0,
     pathable=None,
+    height=None,
 ) -> FakeTimeStep:
     score = [0] * _SCORE_CUMULATIVE_LEN
     score[3] = total_value_units
@@ -118,6 +119,8 @@ def make_timestep(
         from pysc2.lib import features
 
         feature_minimap = {features.MINIMAP_FEATURES.pathable.index: pathable}
+        if height is not None:
+            feature_minimap[features.MINIMAP_FEATURES.height_map.index] = height
     return FakeTimeStep(
         observation=FakeObservation(
             raw_units=units or [],
