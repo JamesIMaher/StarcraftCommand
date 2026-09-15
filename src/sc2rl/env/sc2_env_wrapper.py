@@ -114,6 +114,19 @@ class SC2FightEnv(gym.Env):
         obs_len = observation_length(self.grid)
         self.observation_space = spaces.Box(low=0.0, high=1.0, shape=(obs_len,), dtype=np.float32)
 
+    @property
+    def state(self) -> GameState | None:
+        """Current GameState snapshot -- public so external callers (e.g.
+        the scripted-policy demonstration collector) can drive their own
+        logic off it without reaching into a private attribute."""
+        return self._state
+
+    @property
+    def orientation(self) -> SpawnOrientation:
+        """Current episode's home-relative coordinate mapping -- see
+        SpawnOrientation. Public for the same reason as `state` above."""
+        return self._orientation
+
     def _ensure_env(self):
         if self._sc2_env is None:
             self._sc2_env = self._env_factory(self.config)
