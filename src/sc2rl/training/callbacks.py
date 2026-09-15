@@ -21,6 +21,7 @@ _REWARD_COMPONENTS = (
     "reward_kill",
     "reward_home_defense",
     "reward_scouting",
+    "reward_exploration",
 )
 
 

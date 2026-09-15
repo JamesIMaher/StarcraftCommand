@@ -332,6 +332,38 @@ def test_scouting_bonus_awarded_once_per_newly_seen_enemy_sector():
     assert second_reward == 0.0  # same sector already seen this episode
 
 
+def test_exploration_bonus_awarded_once_per_newly_visited_sector():
+    ts0 = fake.make_timestep(units=[fake.marine(1, x=1, y=1)], minerals=0, food_cap=15)  # home sector
+    ts1 = fake.make_timestep(units=[fake.marine(1, x=56, y=56)], minerals=0, food_cap=15)  # far sector
+    ts2 = fake.make_timestep(units=[fake.marine(1, x=56, y=56)], minerals=0, food_cap=15)  # same sector again
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.exploration_bonus = 0.02
+    env, _ = make_env([ts0, ts1, ts2], config)
+    env.reset()
+
+    _, first_reward, _, _, _ = env.step(FixedAction.NO_OP)
+    assert first_reward == 0.02  # first time a marine enters this sector
+
+    _, second_reward, _, _, _ = env.step(FixedAction.NO_OP)
+    assert second_reward == 0.0  # same sector already visited this episode
+
+
+def test_exploration_bonus_not_awarded_for_home_sector_at_spawn():
+    # Regression guard: marines start in the home sector, so it must count
+    # as already "visited" -- otherwise every episode would pay a free
+    # exploration bonus for simply existing at spawn.
+    ts0 = fake.make_timestep(units=[fake.marine(1, x=1, y=1)], minerals=0, food_cap=15)
+    ts1 = fake.make_timestep(units=[fake.marine(1, x=1, y=1)], minerals=0, food_cap=15)
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.exploration_bonus = 0.02
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    _, reward, _, _, _ = env.step(FixedAction.NO_OP)
+    assert reward == 0.0
+
+
 def test_step_info_exposes_per_component_reward_breakdown():
     # So an imbalance between components (e.g. kill-value outweighing a
     # loss) is directly inspectable instead of needing to be reasoned about
@@ -348,7 +380,8 @@ def test_step_info_exposes_per_component_reward_breakdown():
     assert info["reward_terminal"] == 1.0
     assert info["reward_economic"] == 50.0
     assert set(info.keys()) == {
-        "reward_terminal", "reward_economic", "reward_kill", "reward_home_defense", "reward_scouting",
+        "reward_terminal", "reward_economic", "reward_kill", "reward_home_defense",
+        "reward_scouting", "reward_exploration",
     }
     assert reward == sum(info.values())
 

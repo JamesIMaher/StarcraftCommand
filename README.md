@@ -135,6 +135,17 @@ and per-sector unit presence -- rather than invented heuristics:
 - **Scouting bonus** (OODA loop -- Observe): a one-time reward the first
   time an enemy unit is seen in a given sector during an episode, rewarding
   exploration itself rather than only its downstream combat consequences.
+- **Exploration bonus**: a one-time reward the first time a friendly marine
+  is present in a given sector during an episode (the home sector counts as
+  already visited at spawn), independent of whether an enemy is there. This
+  exists specifically as a counterweight to the home-defense penalty: that
+  penalty fires every step the home sector is undefended, for as long as
+  that holds, with no cap, while scouting_bonus only pays once per sector
+  and economic reward stops once `economic_value_cap` is hit. Without a
+  standing incentive to stay forward, once those one-off bonuses are spent
+  the net marginal reward of continuing to search can go to zero or
+  negative while returning home is strictly zero-or-better -- observed live
+  as marines oscillating back toward home instead of continuing to search.
 
 Even with every component capped, their *sum* can still reach a few points
 of reward regardless of outcome -- capping bounds each channel, but only the
@@ -142,9 +153,10 @@ terminal term actually guarantees winning beats losing. So
 `reward.terminal_reward_scale` (default `10.0`) is deliberately set well
 above 1: with the current caps, worst-case shaping per episode is roughly
 `shaping_coefficient * (economic_value_cap + kill_value_scale *
-kill_value_cap) + scouting_bonus * num_sectors` ~= 4.9, and 10x (+-10)
-comfortably dominates that with margin -- any win outscores any loss no
-matter how much shaping a losing episode racks up. This is tested directly
+kill_value_cap) + (scouting_bonus + exploration_bonus) * num_sectors` ~=
+5.6, and 10x (+-10) comfortably dominates that with margin -- any win
+outscores any loss no matter how much shaping a losing episode racks up.
+This is tested directly
 (`test_default_config_guarantees_any_win_outscores_a_heavily_shaped_loss`)
 against the actual shipped defaults, specifically to catch this class of
 imbalance if the caps/scale are ever retuned again.
@@ -399,17 +411,19 @@ All under `env:` in `configs/default.yaml`:
 | `reward.kill_value_cap` | `2000.0` | Ceiling on kill value used for the reward -- kills alone can't grind out unbounded reward |
 | `reward.home_defense_penalty` | `0.05` | Per-step penalty while home is undefended and under attack |
 | `reward.scouting_bonus` | `0.02` | One-time reward per newly-sighted enemy sector per episode |
+| `reward.exploration_bonus` | `0.02` | One-time reward per sector a marine newly enters per episode -- counterweight to home_defense_penalty |
 | `reward.terminal_reward_scale` | `10.0` | Multiplies PySC2's own terminal win/loss reward -- deliberately dominant, see "How it works" |
 
 `SC2FightEnv.step()` also returns each component separately in its `info`
 dict (`reward_terminal`, `reward_economic`, `reward_kill`,
-`reward_home_defense`, `reward_scouting`, summing to the total reward).
+`reward_home_defense`, `reward_scouting`, `reward_exploration`, summing to
+the total reward).
 `training/callbacks.py`'s `RewardBreakdownCallback` (wired into every
 training run by default) accumulates these per episode and prints a line to
 the console the moment each episode ends, e.g.:
 
 ```
-[episode end] total=-9.680  terminal=-10.000 economic=+0.320 kill=+0.004 home_defense=-0.150 scouting=+0.020
+[episode end] total=-9.620  terminal=-10.000 economic=+0.320 kill=+0.004 home_defense=-0.150 scouting=+0.020 exploration=+0.040
 ```
 
 It also logs each component to TensorBoard under `reward_breakdown/*`. This

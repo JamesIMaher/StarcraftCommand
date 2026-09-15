@@ -107,6 +107,7 @@ class SC2FightEnv(gym.Env):
         self._prev_total_value = 0
         self._prev_kill_value = 0
         self._seen_enemy_sectors: set[int] = set()
+        self._visited_sectors: set[int] = set()
         self._last_reward_breakdown: dict[str, float] = {}
         self._orientation = SpawnOrientation(map_size=config.map_size, mirror_x=False, mirror_y=False)
 
@@ -141,6 +142,10 @@ class SC2FightEnv(gym.Env):
         self._prev_total_value = self._state.total_value_units + self._state.total_value_structures
         self._prev_kill_value = self._state.killed_value_units + self._state.killed_value_structures
         self._seen_enemy_sectors = set()
+        # Home sector counts as already "visited" at spawn -- marines start
+        # there, so it shouldn't pay an exploration bonus the first time
+        # _exploration_bonus() runs.
+        self._visited_sectors = {_HOME_SECTOR}
         obs = featurize(self._state, self.grid, self.config.max_game_loop_norm, self._orientation)
         return obs, {}
 
@@ -205,10 +210,12 @@ class SC2FightEnv(gym.Env):
         reward_kill = 0.0
         reward_home_defense = 0.0
         reward_scouting = 0.0
+        reward_exploration = 0.0
         if self.config.reward.shaping_enabled:
             reward_economic, reward_kill = self._combat_shaping_reward()
             reward_home_defense = self._home_defense_penalty()
             reward_scouting = self._scouting_bonus()
+            reward_exploration = self._exploration_bonus()
 
         self._last_reward_breakdown = {
             "reward_terminal": reward_terminal,
@@ -216,8 +223,12 @@ class SC2FightEnv(gym.Env):
             "reward_kill": reward_kill,
             "reward_home_defense": reward_home_defense,
             "reward_scouting": reward_scouting,
+            "reward_exploration": reward_exploration,
         }
-        return reward_terminal + reward_economic + reward_kill + reward_home_defense + reward_scouting
+        return (
+            reward_terminal + reward_economic + reward_kill
+            + reward_home_defense + reward_scouting + reward_exploration
+        )
 
     def _combat_shaping_reward(self) -> tuple[float, float]:
         """Returns (economic_reward, kill_reward) separately -- see
@@ -299,6 +310,18 @@ class SC2FightEnv(gym.Env):
             return 0.0
         self._seen_enemy_sectors |= newly_seen
         return self.config.reward.scouting_bonus * len(newly_seen)
+
+    def _exploration_bonus(self) -> float:
+        """Counterweight to home_defense_penalty -- see the comment on
+        RewardConfig.exploration_bonus. One-time reward the first time a
+        friendly marine is present in a given sector during this episode,
+        independent of whether an enemy is there."""
+        present_this_step = {self._sector_of(u.x, u.y) for u in self._state.marines}
+        newly_visited = present_this_step - self._visited_sectors
+        if not newly_visited:
+            return 0.0
+        self._visited_sectors |= newly_visited
+        return self.config.reward.exploration_bonus * len(newly_visited)
 
     def close(self):
         if self._sc2_env is not None:

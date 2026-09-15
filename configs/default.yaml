@@ -33,9 +33,12 @@ env:
     kill_value_cap: 2000.0
     home_defense_penalty: 0.05
     scouting_bonus: 0.02
+    # Counterweight to home_defense_penalty's unbounded per-step drag -- see
+    # the comment on RewardConfig.exploration_bonus in config.py.
+    exploration_bonus: 0.02
     # Deliberately dominant -- see the comment on RewardConfig.terminal_reward_scale
     # in config.py: with the caps above, worst-case shaping per episode is
-    # ~4.9, so 10x (+-10) guarantees any win outscores any loss.
+    # ~5.6, so 10x (+-10) guarantees any win outscores any loss.
     terminal_reward_scale: 10.0
 
 training:

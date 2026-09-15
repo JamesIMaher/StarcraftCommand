@@ -96,6 +96,20 @@ class RewardConfig:
     # ever seen in a given sector during an episode -- rewards scouting
     # itself, separate from combat outcomes.
     scouting_bonus: float = 0.02
+    # Counterweight to home_defense_penalty: that penalty fires every step
+    # the home sector is undefended against a present enemy, for as long as
+    # that holds, with no cap -- but scouting_bonus only pays once per
+    # sector and economic reward stops entirely once economic_value_cap is
+    # hit. Without this, once those one-off bonuses are exhausted the net
+    # marginal reward of staying forward can be zero or negative while
+    # returning home is strictly zero-or-better, which pulls the policy back
+    # to base with nothing pulling it back out -- observed live as marines
+    # oscillating near home instead of continuing to search. One-time reward
+    # the first time a friendly marine is present in a given sector during
+    # an episode (excluding the home sector, already "visited" at spawn),
+    # independent of whether an enemy is there -- so covering new ground
+    # itself has an ongoing payoff, not just finding something in it.
+    exploration_bonus: float = 0.02
     # Multiplies PySC2's own terminal win/loss reward (+-1). Set well above
     # 1.0 deliberately: even with economic_value_cap and kill_value_cap in
     # place, a fully-built economy plus a long fight can still sum to a few
@@ -105,9 +119,10 @@ class RewardConfig:
     # losing on its own; only the terminal term does that reliably. With the
     # current caps, worst-case shaping per episode is roughly
     # shaping_coefficient * (economic_value_cap + kill_value_scale *
-    # kill_value_cap) + scouting_bonus * num_sectors =~ 0.001 * (4000 + 0.1 *
-    # 2000) + 0.02 * 36 =~ 4.9 -- 10x here (+-10) comfortably dominates that
-    # with margin, so any win outscores any loss regardless of shaping.
+    # kill_value_cap) + (scouting_bonus + exploration_bonus) * num_sectors
+    # =~ 0.001 * (4000 + 0.1 * 2000) + 0.04 * 36 =~ 5.6 -- 10x here (+-10)
+    # comfortably dominates that with margin, so any win outscores any loss
+    # regardless of shaping.
     terminal_reward_scale: float = 10.0
 
     @staticmethod
