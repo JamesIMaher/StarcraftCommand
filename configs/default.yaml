@@ -23,6 +23,7 @@ env:
     concentration_threshold: 4
     home_defense_penalty: 0.05
     scouting_bonus: 0.02
+    terminal_reward_scale: 1.0
 
 training:
   checkpoint_dir: checkpoints

@@ -67,6 +67,13 @@ class RewardConfig:
     # ever seen in a given sector during an episode -- rewards scouting
     # itself, separate from combat outcomes.
     scouting_bonus: float = 0.02
+    # Multiplies PySC2's own terminal win/loss reward (+-1). 1.0 = untouched.
+    # Raise this if a full episode's cumulative shaping still rivals or
+    # exceeds the terminal signal in magnitude -- shaping now applies on
+    # every step including the terminal one (see sc2_env_wrapper.py), so a
+    # losing episode's final collapse in economic value is captured; this
+    # knob is for further tuning the balance if that alone isn't enough.
+    terminal_reward_scale: float = 1.0
 
     @staticmethod
     def from_dict(data: dict) -> "RewardConfig":

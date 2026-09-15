@@ -178,8 +178,16 @@ class SC2FightEnv(gym.Env):
             self._cooldowns[taken_action] = self.config.build_cooldown_steps
 
     def _compute_reward(self, ts) -> float:
-        reward = float(ts.reward)
-        if self.config.reward.shaping_enabled and not ts.last():
+        # Shaping applies on every step, INCLUDING the terminal one. A loss
+        # typically means the base/army gets wiped out right at the end --
+        # skipping shaping on ts.last() meant that collapse (a large negative
+        # economic-value delta) was never charged against the reward the
+        # agent had already banked from building an economy earlier in the
+        # game, so a losing episode's total reward could still come out
+        # strongly positive. Computing it here too means the delta correctly
+        # reflects whatever the actual final state is.
+        reward = float(ts.reward) * self.config.reward.terminal_reward_scale
+        if self.config.reward.shaping_enabled:
             reward += self._combat_shaping_reward()
             reward += self._home_defense_penalty()
             reward += self._scouting_bonus()

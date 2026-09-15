@@ -97,6 +97,36 @@ def test_terminal_reward_passed_through():
     assert truncated is False
 
 
+def test_shaping_applies_on_terminal_step_and_captures_collapse():
+    # Regression test: shaping used to be skipped entirely on ts.last(), so
+    # a loss's final wipeout (base/army destroyed) was never charged against
+    # reward already banked from building an economy earlier in the episode
+    # -- a losing episode's summed reward could still come out positive.
+    ts0 = fake.make_timestep(minerals=0, food_cap=15, total_value_units=400)  # healthy economy
+    ts1 = fake.make_timestep(  # base wiped out on the terminal step
+        minerals=0, food_cap=15, reward=-1.0, step_type="LAST", total_value_units=0,
+    )
+    config = EnvConfig()
+    config.reward.shaping_enabled = True
+    config.reward.shaping_coefficient = 1.0
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
+    # terminal -1.0, plus the collapse delta (0 - 400) * coefficient 1.0
+    assert reward == -1.0 + (0 - 400)
+
+
+def test_terminal_reward_scale_multiplies_win_loss_reward():
+    ts0 = fake.make_timestep(minerals=0, food_cap=15)
+    ts1 = fake.make_timestep(minerals=0, food_cap=15, reward=1.0, step_type="LAST")
+    config = EnvConfig()
+    config.reward.terminal_reward_scale = 3.0
+    env, _ = make_env([ts0, ts1], config)
+    env.reset()
+    obs, reward, terminated, truncated, info = env.step(FixedAction.NO_OP)
+    assert reward == 3.0
+
+
 def test_reward_shaping_disabled_by_default_matches_terminal_reward_only():
     ts0 = fake.make_timestep(units=[fake.marine(1, x=1, y=1)], minerals=0, food_cap=15)
     ts1 = fake.make_timestep(

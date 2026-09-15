@@ -119,7 +119,14 @@ All shaping coefficients are deliberately small relative to the terminal
 +-1 reward (see the comments in `config.py`) -- shaping nudges the policy
 toward useful sub-behaviors faster than sparse win/loss alone could teach
 them, but the actual objective stays winning the game, not maximizing the
-shaped proxy.
+shaped proxy. Shaping applies on every step, **including the terminal one**
+-- a loss typically means the base/army gets wiped out right at the end, so
+computing the economic-value delta there too is what actually charges the
+agent for that collapse; skipping it (an earlier bug) meant reward already
+banked from building an economy earlier in the game was never offset by the
+final defeat, so a losing episode's summed reward could still come out
+positive. `reward.terminal_reward_scale` (default `1.0`) is an additional
+knob to further weight the terminal win/loss signal if needed.
 
 ## Repository layout
 
@@ -321,6 +328,7 @@ All under `env:` in `configs/default.yaml`:
 | `reward.concentration_threshold` | `4` | Marine count for full kill-reward credit; scaled down below it |
 | `reward.home_defense_penalty` | `0.05` | Per-step penalty while home is undefended and under attack |
 | `reward.scouting_bonus` | `0.02` | One-time reward per newly-sighted enemy sector per episode |
+| `reward.terminal_reward_scale` | `1.0` | Multiplies PySC2's own terminal win/loss reward |
 
 `masking.min_marines_to_move` and `reward.concentration_threshold` are
 separate knobs on purpose -- one is a hard action-legality gate, the other a
