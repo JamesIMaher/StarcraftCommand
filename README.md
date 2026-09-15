@@ -105,6 +105,20 @@ which then taught the policy to avoid moving at all rather than to wait for
 mass. Moving *to* home (e.g. recalling a scattered force, or defending)
 still only needs the lower `min_marines_to_move` bar.
 
+**Where a move actually goes.** `action_translation.py` turns
+`move_army_to_sector_i` into one attack-move per marine (with a little
+jitter so they don't all path to the identical point). If the sector holds
+a *known enemy structure* (visible, or a fog snapshot of one seen earlier),
+the target is the structure itself -- the one nearest the army -- so "go to
+the sector with the building" resolves to "go to the building." Otherwise
+it's the sector's center, which at 6x6 already sees the whole cell. Every
+target is clamped strictly inside the game's own `playable_area` (read from
+`SC2Env.game_info` at reset), because the playable area is inset from the
+nominal 64x64 square: an earlier version biased edge-sector targets all the
+way to the literal map corner to reach corner buildings on the old 4x4
+grid, and since that point is unpathable the attack-move never completed
+-- the whole army would park at the corner cliff for the rest of the game.
+
 **Neural network.** `MaskablePPO`'s default `MlpPolicy`
 (`sb3_contrib.common.maskable.policies.MaskableActorCriticPolicy`) is two
 small separate PyTorch MLPs reading the same 235-dim input: a **policy head**

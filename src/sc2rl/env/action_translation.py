@@ -28,11 +28,26 @@ _BUILD_OFFSET_RANGE = 6.0
 _MOVE_VARIANCE = 0.75
 
 
+# Keep clamped targets this far inside the playable-area boundary rather than
+# exactly on it, so the point is somewhere a unit can actually stand.
+_PLAYABLE_MARGIN = 1.0
+
+
 class ActionTranslator:
     def __init__(self, spec: ActionSpaceSpec, rng: random.Random | None = None):
         self.spec = spec
         self._rng = rng or random.Random()
         self._barracks_cursor = 0
+        # (min_x, min_y, max_x, max_y) in world coordinates, from the game's
+        # own start_raw.playable_area. Set by the env once a game is running;
+        # None falls back to the full map_size square. The map's playable
+        # area is inset from its nominal size (Simple64's is well inside the
+        # 64x64 square), so a target at the literal map corner is unpathable
+        # -- an attack-move there never completes, and the whole army parks
+        # at the nearest cliff edge forever. Confirmed live, twice: once in
+        # the old repo and again here after edge-biased attack targets were
+        # introduced to reach corner buildings on the coarser 4x4 grid.
+        self.playable_area: tuple[float, float, float, float] | None = None
 
     def translate(self, action_index: int, state: GameState, orientation: SpawnOrientation) -> list:
         if action_index == FixedAction.NO_OP:
@@ -86,25 +101,56 @@ class ActionTranslator:
     def _move_army(self, state: GameState, sector: int, orientation: SpawnOrientation) -> list:
         if not state.marines:
             return [sc2_actions.RAW_FUNCTIONS.no_op()]
-        # sector_attack_target() is in canonical (home-relative) space;
-        # convert back to real map coordinates for the actual attack-move
-        # order. Edge/corner sectors are biased to the true map boundary
-        # (not just the cell center) so an attack order can actually reach a
-        # building tucked into a corner -- see sector_attack_target()'s
-        # docstring.
-        cx, cy = self.spec.grid.sector_attack_target(sector)
-        wx, wy = orientation.to_world(cx, cy)
-        map_size = self.spec.grid.map_size
+        target = self._known_structure_target(state, sector, orientation)
+        if target is None:
+            # sector_center() is in canonical (home-relative) space; convert
+            # back to real map coordinates for the actual attack-move order.
+            # At the default 6x6 grid a cell's center already sees the whole
+            # cell (half-diagonal ~7.5 < marine sight ~9), so an empty
+            # sector's center is the right place to sweep to.
+            target = orientation.to_world(*self.spec.grid.sector_center(sector))
+        wx, wy = target
         calls = []
         for marine in state.marines:
-            tx = self._clamp(wx + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE), map_size)
-            ty = self._clamp(wy + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE), map_size)
+            tx, ty = self._clamp_to_playable(
+                wx + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE),
+                wy + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE),
+            )
             calls.append(sc2_actions.RAW_FUNCTIONS.Attack_pt("now", marine.tag, (tx, ty)))
         return calls
 
-    @staticmethod
-    def _clamp(value: float, map_size: int) -> float:
-        return max(0.0, min(float(map_size), value))
+    def _known_structure_target(
+        self, state: GameState, sector: int, orientation: SpawnOrientation
+    ) -> tuple[float, float] | None:
+        """If the target sector holds a known enemy structure (visible, or a
+        fog snapshot of one seen earlier), attack-move at the structure
+        itself -- the one nearest the army -- instead of the sector's center.
+        A building's own position is pathable by construction, which is what
+        makes this the fix for the unreachable-corner problem: the policy now
+        sees known structures per sector in its observation, so "go to the
+        sector with the building" resolves to "go to the building"."""
+        in_sector = [
+            u for u in state.enemy_structures
+            if self.spec.grid.sector_of(*orientation.to_canonical(u.x, u.y)) == sector
+        ]
+        if not in_sector:
+            return None
+        n = len(state.marines)
+        army_x = sum(m.x for m in state.marines) / n
+        army_y = sum(m.y for m in state.marines) / n
+        nearest = min(in_sector, key=lambda u: (u.x - army_x) ** 2 + (u.y - army_y) ** 2)
+        return nearest.x, nearest.y
+
+    def _clamp_to_playable(self, x: float, y: float) -> tuple[float, float]:
+        if self.playable_area is None:
+            min_x = min_y = 0.0
+            max_x = max_y = float(self.spec.grid.map_size)
+        else:
+            min_x, min_y, max_x, max_y = self.playable_area
+        return (
+            max(min_x + _PLAYABLE_MARGIN, min(max_x - _PLAYABLE_MARGIN, x)),
+            max(min_y + _PLAYABLE_MARGIN, min(max_y - _PLAYABLE_MARGIN, y)),
+        )
 
     def _offset_point(self, x: float, y: float) -> tuple[float, float]:
         dx = self._rng.uniform(-_BUILD_OFFSET_RANGE, _BUILD_OFFSET_RANGE)

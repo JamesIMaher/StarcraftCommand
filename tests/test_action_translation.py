@@ -87,21 +87,72 @@ def test_train_marine_ignores_incomplete_barracks():
     assert calls[0].function == sc2_actions.RAW_FUNCTIONS.no_op.id
 
 
-def test_move_army_to_corner_sector_reaches_the_true_map_edge():
-    # Direct regression test for the reported bug: marines attacking the
-    # farthest (corner) sector must actually reach the true map boundary,
-    # not stop ~11 units short at the old cell-center target, or a building
-    # tucked into the corner is never engaged.
+def test_move_army_to_empty_corner_sector_targets_its_center_not_the_map_corner():
+    # Regression test: attack targets used to be biased all the way to the
+    # literal map corner for edge sectors. The playable area is inset from
+    # the nominal map size, so that point is unpathable and the attack-move
+    # never completes -- confirmed live as the whole army parking at the
+    # corner cliff forever. An empty sector is swept via its center.
     spec = make_spec()
     translator = ActionTranslator(spec, rng=random.Random(0))
     state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
-    state.marines.append(fake.marine(1, x=0, y=0))
+    state.marines.append(fake.marine(1, x=30, y=30))
 
-    last_sector = spec.grid.num_sectors - 1
-    calls = translator.translate(spec.move_action_for_sector(last_sector), state, identity_orientation(spec))
+    calls = translator.translate(spec.move_action_for_sector(0), state, identity_orientation(spec))
     target_x, target_y = calls[0].arguments[2]
-    assert target_x >= 60  # within a marine's weapon range of the true (64, 64) corner
-    assert target_y >= 60
+    center_x, center_y = spec.grid.sector_center(0)  # (8, 8) on a 64-map/4x4 grid
+    assert abs(target_x - center_x) <= 1.0
+    assert abs(target_y - center_y) <= 1.0
+
+
+def test_move_army_seeks_a_known_enemy_structure_in_the_target_sector():
+    # With known structures in the observation, "go to the sector with the
+    # building" should resolve to "go to the building": the attack-move is
+    # aimed at the structure's own (pathable) position, not the sector
+    # center -- and at the nearest one to the army when there are several.
+    spec = make_spec()
+    translator = ActionTranslator(spec, rng=random.Random(0))
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.marines.append(fake.marine(1, x=30, y=30))
+    state.enemies.append(fake.enemy_unit(10, fake.UNIT_HATCHERY, x=2, y=2))  # sector 0, far corner
+    state.enemies.append(fake.enemy_unit(11, fake.UNIT_HATCHERY, x=14, y=14))  # sector 0, nearer the army
+    state.enemies.append(fake.enemy_unit(12, fake.UNIT_MARINE, x=5, y=5))  # a unit, not a structure
+
+    calls = translator.translate(spec.move_action_for_sector(0), state, identity_orientation(spec))
+    target_x, target_y = calls[0].arguments[2]
+    assert abs(target_x - 14) <= 1.0
+    assert abs(target_y - 14) <= 1.0
+
+
+def test_move_army_ignores_structures_outside_the_target_sector():
+    spec = make_spec()
+    translator = ActionTranslator(spec, rng=random.Random(0))
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.marines.append(fake.marine(1, x=30, y=30))
+    state.enemies.append(fake.enemy_unit(10, fake.UNIT_HATCHERY, x=60, y=60))  # last sector
+
+    calls = translator.translate(spec.move_action_for_sector(0), state, identity_orientation(spec))
+    target_x, target_y = calls[0].arguments[2]
+    center_x, center_y = spec.grid.sector_center(0)
+    assert abs(target_x - center_x) <= 1.0
+    assert abs(target_y - center_y) <= 1.0
+
+
+def test_move_army_targets_are_clamped_inside_the_playable_area():
+    # The game's playable area is smaller than the nominal map square; a
+    # target outside it (or right on its boundary) is unpathable. Once the
+    # env has read the playable area, every target must land strictly inside.
+    spec = make_spec()
+    translator = ActionTranslator(spec, rng=random.Random(0))
+    translator.playable_area = (20.0, 20.0, 44.0, 44.0)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.marines.append(fake.marine(1, x=30, y=30))
+
+    for sector in (0, spec.grid.num_sectors - 1):  # both corner sectors' centers lie outside the area
+        calls = translator.translate(spec.move_action_for_sector(sector), state, identity_orientation(spec))
+        target_x, target_y = calls[0].arguments[2]
+        assert 20.0 < target_x < 44.0
+        assert 20.0 < target_y < 44.0
 
 
 def test_move_army_issues_attack_pt_for_every_marine():
@@ -133,13 +184,12 @@ def test_move_army_targets_are_un_mirrored_back_to_world_coordinates():
     state.marines.append(fake.marine(1, x=0, y=0))
     mirrored = SpawnOrientation(map_size=spec.grid.map_size, mirror_x=True, mirror_y=True)
 
-    # Sector 0's canonical attack target is the true edge (0, 0) on a
-    # 64-map/4x4 grid; mirrored, the real-world target should be near
-    # (64, 64), clamped to the map boundary.
+    # Sector 0's canonical center is (8, 8) on a 64-map/4x4 grid; mirrored,
+    # the real-world target should be near (56, 56).
     calls = translator.translate(spec.move_action_for_sector(0), state, mirrored)
     target_x, target_y = calls[0].arguments[2]
-    assert 60 <= target_x <= 64
-    assert 60 <= target_y <= 64
+    assert abs(target_x - 56) <= 1.0
+    assert abs(target_y - 56) <= 1.0
 
 
 def test_move_army_no_op_with_no_marines():

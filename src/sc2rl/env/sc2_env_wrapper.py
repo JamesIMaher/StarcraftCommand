@@ -141,6 +141,7 @@ class SC2FightEnv(gym.Env):
         super().reset(seed=seed)
         self._ensure_env()
         timesteps = self._sc2_env.reset()
+        self._translator.playable_area = self._read_playable_area()
         self._cooldowns[:] = 0
         self._state = GameState.from_observation(timesteps[0])
         self._orientation = self._compute_orientation(self._state)
@@ -171,6 +172,17 @@ class SC2FightEnv(gym.Env):
         present_this_step = {self._sector_of(u.x, u.y) for u in self._state.marines}
         self._newly_visited_this_step = present_this_step - self._visited_sectors
         self._visited_sectors |= self._newly_visited_this_step
+
+    def _read_playable_area(self) -> tuple[float, float, float, float] | None:
+        """The game's own start_raw.playable_area, via SC2Env.game_info --
+        see ActionTranslator.playable_area for why attack targets must stay
+        inside it. None (full-map fallback) when the underlying env doesn't
+        expose it, e.g. the stubbed env in tests."""
+        game_info = getattr(self._sc2_env, "game_info", None)
+        if not game_info:
+            return None
+        area = game_info[0].start_raw.playable_area
+        return float(area.p0.x), float(area.p0.y), float(area.p1.x), float(area.p1.y)
 
     def _sector_of(self, x: float, y: float) -> int:
         cx, cy = self._orientation.to_canonical(x, y)

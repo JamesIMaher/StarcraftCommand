@@ -35,6 +35,28 @@ def make_env(timesteps, config: EnvConfig | None = None) -> tuple[SC2FightEnv, S
     return env, stub
 
 
+def test_reset_reads_playable_area_from_the_game_when_available():
+    from types import SimpleNamespace
+
+    class StubWithGameInfo(StubSC2Env):
+        game_info = [SimpleNamespace(start_raw=SimpleNamespace(playable_area=SimpleNamespace(
+            p0=SimpleNamespace(x=10, y=12), p1=SimpleNamespace(x=54, y=52),
+        )))]
+
+    ts0 = fake.make_timestep(minerals=50, food_cap=15)
+    stub = StubWithGameInfo([ts0])
+    env = SC2FightEnv(EnvConfig(), env_factory=lambda cfg: stub)
+    env.reset()
+    assert env._translator.playable_area == (10.0, 12.0, 54.0, 52.0)
+
+
+def test_reset_falls_back_to_full_map_when_game_info_unavailable():
+    ts0 = fake.make_timestep(minerals=50, food_cap=15)
+    env, _ = make_env([ts0])
+    env.reset()
+    assert env._translator.playable_area is None
+
+
 def test_reset_returns_correctly_shaped_observation():
     ts0 = fake.make_timestep(minerals=50, food_cap=15)
     env, _ = make_env([ts0])
