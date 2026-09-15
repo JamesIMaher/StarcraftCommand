@@ -18,7 +18,14 @@ from .game_state import GameState, UnitInfo
 from .sector_grid import SpawnOrientation
 
 _BUILD_OFFSET_RANGE = 6.0
-_MOVE_VARIANCE = 3.0
+# Small on purpose: this used to be 3.0, giving each marine an independent
+# random offset from the shared target every time a move order fired --
+# confirmed live as part of why the group would scatter instead of staying
+# clustered (easier for the enemy to defeat piecemeal). A little jitter
+# avoids every marine pathing to the exact same point (SC2's own collision
+# avoidance handles spacing from there); it doesn't need to be large enough
+# to meaningfully separate the group on its own.
+_MOVE_VARIANCE = 0.75
 
 
 class ActionTranslator:

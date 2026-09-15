@@ -36,14 +36,18 @@ class ScriptedPolicyConfig:
     # this, movement stays legal (e.g. for home defense) but the teacher
     # deliberately holds position rather than advancing piecemeal.
     attack_threshold: int = 20
-    # Give up on confirming "arrival" at the current search target after
-    # this many steps and move on regardless. Maps often have irregular
-    # playable terrain (cliffs, water) that doesn't perfectly fill our
-    # coordinate grid, so a sector near the coordinate-space edge can
-    # correspond to partially unreachable terrain -- without this, the
-    # search can stall forever on a sector the army approaches but never
-    # technically enters.
-    search_timeout_steps: int = 25
+    # A new move/attack order is only (re)issued once at least this fraction
+    # of marines are idle (UnitInfo.is_idle -- no active order, so neither
+    # mid-fight nor still traveling). Below this fraction, the teacher
+    # issues no_op instead, which does not interrupt units' current orders
+    # -- confirmed live: reissuing move commands while marines were still
+    # engaged or mid-approach was part of why they'd scatter instead of
+    # staying grouped, and interrupting combat orders needlessly.
+    idle_fraction_to_reorder: float = 0.5
+    # Safety net only: give up waiting for the idle signal after this many
+    # steps and move on regardless, in case marines get stuck fighting
+    # unreachable/kited stragglers indefinitely without ever going idle.
+    search_timeout_steps: int = 60
 
 
 class ScriptedPolicy:
@@ -95,42 +99,53 @@ class ScriptedPolicy:
             # position rather than advance piecemeal.
             return int(FixedAction.NO_OP)
 
-        return self._search_and_destroy(state, spec, orientation, mask, enemy_sectors)
+        return self._search_and_destroy(state, spec, mask, enemy_sectors)
 
-    def _search_and_destroy(self, state, spec, orientation, mask, enemy_sectors: set[int]) -> int:
-        # Destroy takes priority over searching: attack the closest legal
-        # sector with a currently-known enemy in it.
-        for sector in sorted(enemy_sectors, reverse=True):
-            action = spec.move_action_for_sector(sector)
-            if mask[action]:
-                self._clear_search_target()
-                return action
+    def _search_and_destroy(self, state: GameState, spec, mask, enemy_sectors: set[int]) -> int:
+        ready_for_new_order = self._ready_for_new_order(state)
 
-        # No enemy currently visible -- keep searching. Mark the current
-        # target cleared once either the army actually arrives there with
-        # nothing found, OR search_timeout_steps elapses without confirmed
-        # arrival (handles targets in terrain the army can approach but
-        # never technically enter).
-        if self._current_search_target is not None:
-            marine_sectors = _sectors_of(state.marines, spec, orientation)
+        if enemy_sectors:
+            # Destroy takes priority over searching: attack the closest
+            # legal sector with a currently-known enemy in it.
+            target_sector = max(s for s in enemy_sectors if mask[spec.move_action_for_sector(s)]) \
+                if any(mask[spec.move_action_for_sector(s)] for s in enemy_sectors) else None
+            if target_sector is not None:
+                if target_sector == self._current_search_target and not ready_for_new_order:
+                    return int(FixedAction.NO_OP)  # already engaging it -- don't interrupt
+                self._current_search_target = target_sector
+                self._search_target_steps = 0
+                return spec.move_action_for_sector(target_sector)
+
+        # No enemy currently visible.
+        if not ready_for_new_order:
+            # Still mid-approach or finishing something -- leave them be
+            # rather than interrupt with a redundant order.
             self._search_target_steps += 1
-            arrived = self._current_search_target in marine_sectors
-            timed_out = self._search_target_steps >= self.config.search_timeout_steps
-            if arrived or timed_out:
-                self._cleared_sectors.add(self._current_search_target)
-                self._clear_search_target()
+            return int(FixedAction.NO_OP)
 
-        if self._current_search_target is None:
-            candidates = [s for s in range(spec.grid.num_sectors) if s not in self._cleared_sectors]
-            if not candidates:
-                self._cleared_sectors.clear()  # searched everywhere and found nothing -- start over
-                candidates = list(range(spec.grid.num_sectors))
-            # Farthest-from-home first: home-adjacent sectors are already
-            # covered by the defense check above, and the enemy is more
-            # likely to be found away from our own base.
-            self._current_search_target = max(candidates)
+        # Idle (or timed out) with nothing to fight here -- this area is
+        # clear, move on to the next one.
+        if self._current_search_target is not None:
+            self._cleared_sectors.add(self._current_search_target)
 
+        candidates = [s for s in range(spec.grid.num_sectors) if s not in self._cleared_sectors]
+        if not candidates:
+            self._cleared_sectors.clear()  # searched everywhere and found nothing -- start over
+            candidates = list(range(spec.grid.num_sectors))
+        # Farthest-from-home first: home-adjacent sectors are already
+        # covered by the defense check above, and the enemy is more likely
+        # to be found away from our own base.
+        self._current_search_target = max(candidates)
+        self._search_target_steps = 0
         return spec.move_action_for_sector(self._current_search_target)
+
+    def _ready_for_new_order(self, state: GameState) -> bool:
+        if self._search_target_steps >= self.config.search_timeout_steps:
+            return True
+        if not state.marines:
+            return True
+        idle_count = sum(1 for m in state.marines if m.is_idle)
+        return (idle_count / len(state.marines)) >= self.config.idle_fraction_to_reorder
 
     def _clear_search_target(self) -> None:
         self._current_search_target = None

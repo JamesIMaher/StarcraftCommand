@@ -329,9 +329,18 @@ and undefended, and -- once mobilized to a real attack force
 (`ScriptedPolicyConfig.attack_threshold`, default 20 marines, separate from
 `masking.min_marines_to_move` which only gates whether movement is legal at
 all) -- commit to a **search-and-destroy** pattern: sweep sectors
-farthest-from-home first, redirect immediately to any sector where the
-enemy is actually spotted, and mark a sector cleared once the army arrives
-there and finds nothing.
+farthest-from-home first, redirecting immediately to any sector where the
+enemy is actually spotted. A new order only fires once the majority of
+marines are idle (`UnitInfo.is_idle` -- no active order, so neither
+mid-fight nor still traveling); while busy, the teacher issues `no_op`,
+which doesn't interrupt existing orders. This matters for two reasons,
+both confirmed live: reissuing move orders while marines were still
+mid-approach or mid-fight was part of why the group would scatter instead
+of staying clustered (an exact-grid-cell "arrival" check also meant the
+search could sit idle for a long time on an already-cleared area before
+timing out and moving on -- the idle signal reacts immediately instead).
+`search_timeout_steps` (default 60) is now just a safety net in case
+marines somehow never go idle.
 
 Collect a demonstration dataset from real games with it, then pretrain on
 that before RL fine-tuning:

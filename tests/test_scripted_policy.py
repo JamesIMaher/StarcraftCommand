@@ -85,7 +85,12 @@ def test_redirects_to_a_spotted_enemy_over_continuing_the_search():
     assert action == spec.move_action_for_sector(5)
 
 
-def test_moves_to_next_sector_after_arriving_at_current_target_and_finding_nothing():
+def test_does_not_interrupt_marines_that_are_still_busy():
+    # Regression test: reissuing a move/attack order while marines are still
+    # mid-approach or mid-fight was part of why they'd scatter instead of
+    # staying grouped. While the majority are non-idle (busy), the teacher
+    # should issue no_op -- which does not interrupt existing orders --
+    # instead of retargeting.
     spec = make_spec()
     masking = MaskingConfig(min_marines_to_move=4)
     policy = ScriptedPolicy(ScriptedPolicyConfig(target_supply_depots=0, target_barracks=0, attack_threshold=20))
@@ -98,20 +103,41 @@ def test_moves_to_next_sector_after_arriving_at_current_target_and_finding_nothi
     first_action = policy.action(state, spec, masking, orientation)
     assert first_action == spec.move_action_for_sector(far_sector)
 
-    # Army has now arrived at the far sector; still nothing there.
-    fx, fy = spec.grid.sector_center(far_sector)
-    state_arrived = GameState(game_loop=1, minerals=0, food_used=0, food_cap=15)
+    # Still traveling / fighting -- majority not idle.
+    busy_state = GameState(game_loop=1, minerals=0, food_used=0, food_cap=15)
     for tag in range(20):
-        state_arrived.marines.append(fake.marine(tag, x=fx, y=fy))
-    second_action = policy.action(state_arrived, spec, masking, orientation)
+        busy_state.marines.append(fake.marine(tag, x=10, y=10, idle=False))
+    second_action = policy.action(busy_state, spec, masking, orientation)
+    assert second_action == FixedAction.NO_OP
+
+
+def test_moves_to_next_sector_once_marines_go_idle_with_nothing_to_fight():
+    spec = make_spec()
+    masking = MaskingConfig(min_marines_to_move=4)
+    policy = ScriptedPolicy(ScriptedPolicyConfig(target_supply_depots=0, target_barracks=0, attack_threshold=20))
+    orientation = identity_orientation(spec)
+    far_sector = spec.grid.num_sectors - 1
+
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    for tag in range(20):
+        state.marines.append(fake.marine(tag, x=1, y=1))
+    first_action = policy.action(state, spec, masking, orientation)
+    assert first_action == spec.move_action_for_sector(far_sector)
+
+    # Cleared the area and stopped -- idle, nothing left to fight.
+    fx, fy = spec.grid.sector_center(far_sector)
+    idle_state = GameState(game_loop=1, minerals=0, food_used=0, food_cap=15)
+    for tag in range(20):
+        idle_state.marines.append(fake.marine(tag, x=fx, y=fy, idle=True))
+    second_action = policy.action(idle_state, spec, masking, orientation)
     assert second_action != spec.move_action_for_sector(far_sector)  # moved on to search elsewhere
 
 
-def test_gives_up_on_an_unreachable_target_after_timeout():
-    # Regression test: a target sector near unpathable terrain (cliffs,
-    # water) can be approached but never technically "arrived" at -- without
-    # a timeout, the search would stall on it forever instead of covering
-    # the rest of the map.
+def test_gives_up_via_timeout_if_never_confirmed_idle():
+    # Safety net: if marines somehow never go idle (e.g. perpetually
+    # re-engaging kited stragglers one at a time), the search still moves on
+    # to a DIFFERENT sector eventually instead of stalling on the current
+    # target forever.
     spec = make_spec()
     masking = MaskingConfig(min_marines_to_move=4)
     policy = ScriptedPolicy(ScriptedPolicyConfig(
@@ -120,15 +146,19 @@ def test_gives_up_on_an_unreachable_target_after_timeout():
     orientation = identity_orientation(spec)
     far_sector = spec.grid.num_sectors - 1
 
-    # Marines never actually reach the target sector (stuck short of it,
-    # simulating unreachable terrain) across every step below the timeout.
-    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    idle_state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
     for tag in range(20):
-        state.marines.append(fake.marine(tag, x=1, y=1))
+        idle_state.marines.append(fake.marine(tag, x=1, y=1, idle=True))
+    first_action = policy.action(idle_state, spec, masking, orientation)
+    assert first_action == spec.move_action_for_sector(far_sector)
+
+    busy_state = GameState(game_loop=1, minerals=0, food_used=0, food_cap=15)
+    for tag in range(20):
+        busy_state.marines.append(fake.marine(tag, x=1, y=1, idle=False))
 
     for _ in range(6):
-        action = policy.action(state, spec, masking, orientation)
-    assert action != spec.move_action_for_sector(far_sector)  # gave up and moved on after the timeout
+        action = policy.action(busy_state, spec, masking, orientation)
+    assert action != spec.move_action_for_sector(far_sector)  # gave up on this target after the timeout
 
 
 def test_breaks_off_search_to_defend_home_under_threat():

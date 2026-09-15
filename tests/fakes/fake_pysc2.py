@@ -121,10 +121,10 @@ def scv(tag: int, x: float = 0.0, y: float = 0.0, idle: bool = True) -> FakeUnit
 
 
 def marine(tag: int, x: float = 0.0, y: float = 0.0, health: float = 45.0,
-           health_ratio: int = 255) -> FakeUnit:
+           health_ratio: int = 255, idle: bool = True) -> FakeUnit:
     return FakeUnit(
         tag=tag, unit_type=UNIT_MARINE, alliance=ALLIANCE_SELF, x=x, y=y,
-        health=health, health_ratio=health_ratio,
+        health=health, health_ratio=health_ratio, order_length=0 if idle else 1,
     )
 
 
