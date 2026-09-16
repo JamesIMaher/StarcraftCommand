@@ -16,6 +16,9 @@ tensorboard/
 *.zip
 *.npz
 
+# Secrets
+.env
+
 # OS / editor
 .vs/
 .vscode/

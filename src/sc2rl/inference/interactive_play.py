@@ -7,7 +7,8 @@ hands control straight back to the trained policy. See play.py for plain
 Usage:
     python -m sc2rl.inference.interactive_play --checkpoint checkpoints/final_model
 
-Requires ANTHROPIC_API_KEY in the environment.
+Requires ANTHROPIC_API_KEY, either already in the environment or in a local
+.env file (see .env.example) -- load_dotenv() below picks up the latter.
 """
 
 from __future__ import annotations
@@ -17,9 +18,10 @@ import os
 import queue
 
 import anthropic
+from dotenv import load_dotenv
 from sb3_contrib import MaskablePPO
 
-from ..command.interpreter import interpret_command
+from ..command.interpreter import DEFAULT_MODEL, interpret_command
 from ..command.server import PendingCommand, run_server
 from ..config import Config
 from ..env.sc2_env_wrapper import SC2FightEnv
@@ -27,7 +29,10 @@ from ..env.sc2_env_wrapper import SC2FightEnv
 DEFAULT_PORT = 8765
 
 
-def play(config: Config, checkpoint: str, episodes: int, port: int, deterministic: bool = True) -> None:
+def play(
+    config: Config, checkpoint: str, episodes: int, port: int,
+    deterministic: bool = True, command_model: str = DEFAULT_MODEL,
+) -> None:
     env = SC2FightEnv(config.env)
     model = MaskablePPO.load(checkpoint)
     client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the environment
@@ -56,6 +61,7 @@ def play(config: Config, checkpoint: str, episodes: int, port: int, deterministi
                 result = interpret_command(
                     client, pending.text, env.state, env.action_spec, action_masks,
                     env.orientation, env.mobilized, env.config.garrison_size,
+                    model=command_model,
                 )
                 print(f"[command] {pending.text!r} -> {result.action_name}: {result.message}")
                 pending.result = {
@@ -89,16 +95,27 @@ def main() -> None:
     parser.add_argument("--visualize", action="store_true", help="Render the game window")
     parser.add_argument("--stochastic", action="store_true", help="Sample actions instead of taking the argmax")
     parser.add_argument("--command-port", type=int, default=DEFAULT_PORT, help="Local port for the command console")
+    parser.add_argument(
+        "--command-model", default=DEFAULT_MODEL,
+        help="Claude model that interprets console commands (default: %(default)s)",
+    )
     args = parser.parse_args()
 
+    load_dotenv()  # picks up a local .env if present; no-op (and harmless) if it isn't
     if not os.environ.get("ANTHROPIC_API_KEY"):
-        raise SystemExit("ANTHROPIC_API_KEY is not set -- the command console needs it to reach Claude.")
+        raise SystemExit(
+            "ANTHROPIC_API_KEY is not set -- the command console needs it to reach Claude. "
+            "Put it in a .env file (see .env.example) or set it in your shell."
+        )
 
     config = Config.from_yaml(args.config)
     if args.visualize:
         config.env.visualize = True
 
-    play(config, args.checkpoint, args.episodes, args.command_port, deterministic=not args.stochastic)
+    play(
+        config, args.checkpoint, args.episodes, args.command_port,
+        deterministic=not args.stochastic, command_model=args.command_model,
+    )
 
 
 if __name__ == "__main__":

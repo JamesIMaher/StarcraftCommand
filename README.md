@@ -646,9 +646,29 @@ base" or "build a supply depot." It interrupts autonomous play for exactly
 one action, then hands control straight back to the model:
 
 ```powershell
-$env:ANTHROPIC_API_KEY = "..."
+copy .env.example .env
+notepad .env    # paste your key in place of sk-ant-...
 python -m sc2rl.inference.interactive_play --checkpoint checkpoints/final_model --visualize
 ```
+
+**Where the API key lives.** `interactive_play.py` calls `load_dotenv()` on
+startup, which reads a local `.env` file (gitignored, never committed) into
+the process environment -- copy `.env.example` to `.env` and fill in a real
+key from
+[console.anthropic.com/settings/keys](https://console.anthropic.com/settings/keys).
+This is the recommended way on Windows: the key stays scoped to this one
+project instead of a machine-wide environment variable every other program
+on the PC can also read, and there's nothing to re-set every time you open a
+new PowerShell window. Two alternatives if you'd rather not add a `.env`
+file:
+- **Current session only:** `$env:ANTHROPIC_API_KEY = "sk-ant-..."` --
+  forgotten the moment you close that PowerShell window.
+- **Persistent, machine-wide:** `setx ANTHROPIC_API_KEY "sk-ant-..."` --
+  survives across sessions and reboots (stored in the Windows registry
+  under your user account), but takes effect only in *new* terminals opened
+  after running it, and every program running as you can read it, not just
+  this project. The Environment Variables entry in Windows' System
+  Properties dialog does the same thing through the GUI.
 
 Open the printed `http://127.0.0.1:8765` (`--command-port` to change it).
 Under the hood, a command is turned into one action via a single **forced
@@ -668,12 +688,18 @@ executes against the state the player actually saw. A declined command
 doesn't consume a game step either; the loop just falls through to
 `model.predict()` on the next iteration as if nothing happened.
 
-Model interpreting commands defaults to `claude-haiku-4-5-20251001`
-(`command/interpreter.py`'s `DEFAULT_MODEL`) -- cheap and fast, plenty for
-picking one item off a short menu. `state_summary.py` builds the natural-
-language state description Claude sees (minerals, army size, mobilized/
-garrison status, which sectors hold known enemies) -- deliberately separate
-from `observation.py`'s `featurize()`, whose normalized float vector means
+**Which model, and where that's set.** Commands are interpreted by
+`claude-haiku-4-5-20251001` -- the fastest, cheapest model in the current
+Claude lineup, and deliberately chosen: this call is a single forced tool
+use picking one item off a short, explicit menu (the current legal-action
+list), not open-ended reasoning, so a larger model buys nothing here.
+`command/interpreter.py`'s `DEFAULT_MODEL` constant is the single source of
+truth for it; override per-run without touching code via
+`--command-model claude-sonnet-5` (or any other model ID) on
+`interactive_play.py`. `state_summary.py` builds the natural-language state
+description Claude sees (minerals, army size, mobilized/garrison status,
+which sectors hold known enemies) -- deliberately separate from
+`observation.py`'s `featurize()`, whose normalized float vector means
 nothing to an LLM.
 
 **v1 scope, by design:** one action per command (matches "return to base"
