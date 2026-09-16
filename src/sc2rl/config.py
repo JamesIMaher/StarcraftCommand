@@ -224,6 +224,14 @@ class EnvConfig:
     build_cooldown_steps: int = 3
     max_game_loop_norm: int = 20000
     visualize: bool = False
+    # False (the default) steps the game as fast as the client can simulate
+    # -- what training, evaluation (play.py) and demonstration collection
+    # all want. True paces it to true StarCraft II speed (22.4 game loops/
+    # second) via pysc2's own realtime mode instead, which is what a human
+    # needs to actually watch play and type or speak a command in time --
+    # interactive_play.py defaults this on for exactly that reason (its
+    # --no-realtime flag opts back out).
+    realtime: bool = False
     # If set, the env writes a one-time ASCII map here at the first reset:
     # the pathing grid (unpathable / pathable-but-unreachable / reachable),
     # the command center, marines, the grid bounds and every sector's chosen
@@ -264,6 +272,7 @@ class EnvConfig:
             "build_cooldown_steps": defaults.build_cooldown_steps,
             "max_game_loop_norm": defaults.max_game_loop_norm,
             "visualize": defaults.visualize,
+            "realtime": defaults.realtime,
             "pathing_debug_path": defaults.pathing_debug_path,
             "garrison_size": defaults.garrison_size,
         }

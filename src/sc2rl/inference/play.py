@@ -43,11 +43,17 @@ def main() -> None:
     parser.add_argument("--episodes", type=int, default=1)
     parser.add_argument("--visualize", action="store_true", help="Render the game window")
     parser.add_argument("--stochastic", action="store_true", help="Sample actions instead of taking the argmax")
+    parser.add_argument(
+        "--realtime", action="store_true",
+        help="Pace the game to true StarCraft II speed instead of stepping as fast as the client can simulate "
+             "(off by default -- most uses of this entrypoint are bulk evaluation, where speed wins).",
+    )
     args = parser.parse_args()
 
     config = Config.from_yaml(args.config)
     if args.visualize:
         config.env.visualize = True
+    config.env.realtime = args.realtime
 
     play(config, args.checkpoint, args.episodes, deterministic=not args.stochastic)
 

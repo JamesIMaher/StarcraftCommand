@@ -707,6 +707,41 @@ being a single `move_army_to_sector_N`); no live game-state panel in the
 page yet, just a running command log. Both are natural follow-ups once this
 is proven out.
 
+**Startup, in order.** There's one command, not two -- `interactive_play.py`
+starts the command console (a background thread) and *then* launches
+StarCraft II itself (the first `env.reset()`, inside the same process), so
+the console is reachable slightly before the game has actually finished
+loading. Wait for the game to visibly be playing (the visualized window, or
+episode output in the terminal) before sending your first command: a
+command sent too early just sits queued until the main loop starts pulling
+from it, and if that wait passes the command endpoint's 30-second timeout
+(`command/server.py`'s `_COMMAND_TIMEOUT_SECONDS`) the browser gets a
+timeout error rather than an answer. There's currently no "game not ready
+yet" status shown on the page itself -- a reasonable follow-up if this
+turns out to matter in practice.
+
+**How the browser reaches the game.** There is no REST service inside
+StarCraft II, and the page never talks to the game directly. Everything --
+the environment, the trained model, the Claude client, and the Flask
+server -- runs in the one `interactive_play.py` process; the browser only
+ever talks to that process's own local Flask endpoint
+(`http://127.0.0.1:8765`), which hands commands to the game loop through an
+in-process queue (`command/server.py`'s `PendingCommand` + `queue.Queue`).
+PySC2 talks to the actual SC2 executable over its own separate local
+protocol, untouched by any of this.
+
+**Realtime pacing.** By default, `SC2FightEnv` steps the game as fast as the
+client can simulate -- the right choice for training, evaluation, and
+demonstration collection, where wall-clock speed doesn't matter. A human
+typing or speaking a command needs the opposite: true StarCraft II pacing
+(22.4 game loops/second), which is pysc2's own `realtime` mode
+(`env.realtime` in `config.py`, plumbed straight through to
+`sc2_env.SC2Env`). `interactive_play.py` turns this **on by default** for
+exactly that reason -- pass `--no-realtime` to fall back to turbo speed if
+you want to stress-test the console without waiting on the clock.
+`play.py` keeps it off by default (`--realtime` to turn it on there too),
+since that entrypoint is normally used for fast bulk evaluation.
+
 ## Key defaults (see `configs/default.yaml`)
 
 - Map: `Simple64` vs. `very_easy` Zerg bot (matches the old repo's baseline,

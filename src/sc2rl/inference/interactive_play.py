@@ -93,6 +93,12 @@ def main() -> None:
     parser.add_argument("--checkpoint", required=True, help="Path to a saved MaskablePPO .zip checkpoint")
     parser.add_argument("--episodes", type=int, default=1)
     parser.add_argument("--visualize", action="store_true", help="Render the game window")
+    parser.add_argument(
+        "--no-realtime", dest="realtime", action="store_false",
+        help="Step the game as fast as the client can simulate instead of at true game speed. "
+             "Defaults to realtime ON, since a human needs true pacing to type or speak a command in time.",
+    )
+    parser.set_defaults(realtime=True)
     parser.add_argument("--stochastic", action="store_true", help="Sample actions instead of taking the argmax")
     parser.add_argument("--command-port", type=int, default=DEFAULT_PORT, help="Local port for the command console")
     parser.add_argument(
@@ -111,6 +117,7 @@ def main() -> None:
     config = Config.from_yaml(args.config)
     if args.visualize:
         config.env.visualize = True
+    config.env.realtime = args.realtime
 
     play(
         config, args.checkpoint, args.episodes, args.command_port,

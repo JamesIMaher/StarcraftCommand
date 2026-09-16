@@ -79,6 +79,7 @@ def _build_sc2_env(config: EnvConfig) -> sc2_env.SC2Env:
         step_mul=config.step_mul,
         game_steps_per_episode=0,
         visualize=config.visualize,
+        realtime=config.realtime,
     )
 
 

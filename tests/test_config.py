@@ -27,3 +27,12 @@ def test_train_fast_yaml_loads():
     config = Config.from_yaml("configs/train_fast.yaml")
     assert config.training.ppo.total_timesteps == 2000
     assert config.training.checkpoint_dir == "checkpoints/fast"
+
+
+def test_realtime_defaults_off_and_is_overridable():
+    # Off by default: training, evaluation, and demonstration collection all
+    # want the game stepped as fast as the client can simulate, not paced to
+    # true StarCraft II speed. interactive_play.py opts back in via its own
+    # CLI default, not this config default -- see its --no-realtime flag.
+    assert Config.from_dict({}).env.realtime is False
+    assert Config.from_dict({"env": {"realtime": True}}).env.realtime is True

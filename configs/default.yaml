@@ -7,6 +7,11 @@ env:
   build_cooldown_steps: 3
   max_game_loop_norm: 20000
   visualize: true
+  # Steps as fast as the client can simulate rather than at true game speed
+  # -- what training/evaluation/collection want. interactive_play.py
+  # overrides this to true by default (see its --no-realtime flag) since a
+  # human needs true pacing to send a command in time.
+  realtime: false
   # One-time ASCII dump of the pathing grid / units / sector targets at the
   # first reset -- see EnvConfig.pathing_debug_path.
   pathing_debug_path: pathing_debug.txt
