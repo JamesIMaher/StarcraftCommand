@@ -4,13 +4,33 @@ same fixture test_env_wrapper.py itself uses -- rather than a hand-rolled
 fake, since these functions' whole job is to call real env methods correctly.
 """
 
+import pytest
+
+import sc2rl.command.server as server_module
 from sc2rl.command.interpreter import ActionResult, DeclineResult, DirectiveResult, DispatchResult, ReleaseResult
 from sc2rl.command.server import EventLog, PendingCommand
 from sc2rl.config import EnvConfig
 from sc2rl.env.action_space import FixedAction
-from sc2rl.inference.interactive_play import _apply_command_result, _autonomous_action
+from sc2rl.inference.interactive_play import _apply_command_result, _autonomous_action, _build_client
 from tests.fakes import fake_pysc2 as fake
 from tests.test_env_wrapper import make_env
+
+
+# --- _build_client ---------------------------------------------------------------
+
+def test_claude_client_fails_fast_instead_of_freezing_the_game_loop():
+    # Regression test: the SDK's own default (600s read timeout, 2 retries)
+    # let one slow/hung API call block the main loop -- and so every
+    # env.step() with it -- for minutes, long after server.py's own 30s
+    # wait had already given up and reported a timeout to the browser.
+    client = _build_client()
+    assert client.timeout == pytest.approx(12.0)
+    assert client.max_retries == 0
+    # The whole point: even a client that maxes out its own timeout once
+    # (no retries) must still come back well inside the console's request
+    # timeout, so interpret_command's exception handler gets a chance to
+    # return a DeclineResult before the browser's own wait expires.
+    assert client.timeout < server_module._COMMAND_TIMEOUT_SECONDS
 
 
 class FakeModel:

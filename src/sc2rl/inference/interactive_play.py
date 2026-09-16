@@ -45,6 +45,23 @@ from ..env.sc2_env_wrapper import SC2FightEnv
 
 DEFAULT_PORT = 8765
 
+# Comfortably under server.py's _COMMAND_TIMEOUT_SECONDS (30s). The
+# anthropic SDK's own default (600s read timeout, 2 retries) let one slow
+# or hung API call freeze the WHOLE game loop for minutes -- confirmed
+# live: a command timed out in the browser (server.py's own 30s wait gave
+# up), but the main loop was still blocked inside client.messages.create(),
+# so no further env.step() calls happened at all and the autonomous policy
+# stopped issuing any new orders (SCVs kept mining only because that's an
+# already-issued SC2 order, not something our loop re-triggers each step).
+# max_retries=0 too: a local single-user tool should fail fast into
+# interpret_command's own exception handler (a DeclineResult) rather than
+# silently retrying for up to another _CLAUDE_TIMEOUT_SECONDS on top.
+_CLAUDE_TIMEOUT_SECONDS = 12.0
+
+
+def _build_client() -> anthropic.Anthropic:
+    return anthropic.Anthropic(timeout=_CLAUDE_TIMEOUT_SECONDS, max_retries=0)
+
 
 def _apply_command_result(env: SC2FightEnv, result, pending: PendingCommand, events: EventLog):
     """Route one interpreted command to its effect on the environment.
@@ -118,7 +135,7 @@ def play(
 ) -> None:
     env = SC2FightEnv(config.env)
     model = MaskablePPO.load(checkpoint)
-    client = anthropic.Anthropic()  # reads ANTHROPIC_API_KEY from the environment
+    client = _build_client()  # reads ANTHROPIC_API_KEY from the environment
 
     command_queue: "queue.Queue[PendingCommand]" = queue.Queue()
     control_queue: "queue.Queue[PendingRelease]" = queue.Queue()

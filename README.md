@@ -824,6 +824,24 @@ executes against the state the player actually saw. A declined command
 doesn't consume a game step either; the loop just falls through to
 `model.predict()` on the next iteration as if nothing happened.
 
+**A slow/hung Claude call must not freeze the whole game.** Because nothing
+else runs while a command is being interpreted (previous paragraph), the
+Claude API call is squarely on the game loop's own critical path -- and the
+`anthropic` SDK's own defaults (600s read timeout, 2 retries) mean an
+unbounded call there can stall *every* future `env.step()`, autonomous or
+commanded, for minutes: confirmed live, a command timed out in the browser
+(server.py's own 30s wait gave up) while the main loop was still blocked
+inside `client.messages.create()`, so the autonomous policy stopped issuing
+any new orders at all until that call finally returned (SCVs kept
+auto-mining regardless -- that's an already-issued SC2 order, not something
+the loop re-triggers). `interactive_play.py` now builds the client via
+`_build_client()` with an explicit `timeout=12.0, max_retries=0` --
+comfortably under `_COMMAND_TIMEOUT_SECONDS` and with no silent retry
+doubling that further, so a bad network moment fails fast into
+`interpret_command()`'s existing exception handler (a `DeclineResult`)
+instead of freezing play past the point the page already reported a
+timeout.
+
 **Which model, and where that's set.** Commands are interpreted by
 `claude-haiku-4-5-20251001` -- the fastest, cheapest model in the current
 Claude lineup, and deliberately chosen: this call is a single forced tool
