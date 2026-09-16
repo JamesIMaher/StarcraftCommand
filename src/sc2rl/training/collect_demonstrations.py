@@ -17,12 +17,19 @@ from ..env.sc2_env_wrapper import SC2FightEnv
 from ..env.scripted_policy import ScriptedPolicy, ScriptedPolicyConfig
 
 
-def collect(config: Config, episodes: int, env_factory=None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def collect(
+    config: Config, episodes: int, env_factory=None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     env = SC2FightEnv(config.env) if env_factory is None else SC2FightEnv(config.env, env_factory=env_factory)
     policy = ScriptedPolicy(ScriptedPolicyConfig())
     observations: list[np.ndarray] = []
     actions: list[int] = []
     masks: list[np.ndarray] = []
+    # Which episode each sample came from -- lets BC pretraining hold out
+    # whole games instead of a raw slice of the concatenated array (see
+    # behavior_cloning.py: one unusually long episode landing entirely
+    # inside a plain "last 10%" cut made the held-out loss meaningless).
+    episode_ids: list[int] = []
 
     try:
         for episode in range(episodes):
@@ -51,6 +58,7 @@ def collect(config: Config, episodes: int, env_factory=None) -> tuple[np.ndarray
                 observations.append(obs)
                 actions.append(action)
                 masks.append(mask)
+                episode_ids.append(episode)
                 obs, _reward, terminated, truncated, _info = env.step(action)
             print(f"episode {episode + 1}/{episodes} collected -- dataset size so far: {len(observations)}")
     finally:
@@ -60,6 +68,7 @@ def collect(config: Config, episodes: int, env_factory=None) -> tuple[np.ndarray
         np.asarray(observations, dtype=np.float32),
         np.asarray(actions, dtype=np.int64),
         np.asarray(masks, dtype=bool),
+        np.asarray(episode_ids, dtype=np.int64),
     )
 
 
@@ -71,8 +80,10 @@ def main() -> None:
     args = parser.parse_args()
 
     config = Config.from_yaml(args.config)
-    observations, actions, masks = collect(config, args.episodes)
-    np.savez_compressed(args.out, observations=observations, actions=actions, masks=masks)
+    observations, actions, masks, episode_ids = collect(config, args.episodes)
+    np.savez_compressed(
+        args.out, observations=observations, actions=actions, masks=masks, episode_ids=episode_ids,
+    )
     print(f"Saved {len(observations)} (obs, action, mask) triples to {args.out}")
 
 

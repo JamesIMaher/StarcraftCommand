@@ -81,8 +81,14 @@ def train(
                     "features or grid size changed since it was collected. Re-collect it with "
                     "`python -m sc2rl.training.collect_demonstrations` against the current config."
                 )
+            # episode_ids lets BC hold out whole games rather than a raw
+            # slice of the concatenated array -- absent in a dataset
+            # collected before it existed, which pretrain_with_behavior_cloning
+            # falls back gracefully for.
+            episode_ids = data["episode_ids"] if "episode_ids" in data.files else None
             pretrain_with_behavior_cloning(
-                model, data["observations"], data["actions"], data["masks"], epochs=bc_epochs,
+                model, data["observations"], data["actions"], data["masks"],
+                epochs=bc_epochs, episode_ids=episode_ids,
             )
 
     # NOTE: with reset_num_timesteps=False (i.e. --resume-from was given),

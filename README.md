@@ -589,8 +589,8 @@ gives to what the teacher did: 0.2 means ~82%. It does not go to zero and
 shouldn't be expected to -- the teacher's choice depends on its own hidden
 state (current search target, cleared-sector memory), so the same
 observation can legitimately map to different actions. Each epoch also
-prints `held_out_loss` on a contiguous 10% block of the dataset that was
-never trained on (contiguous, not shuffled: consecutive steps of one game
+prints `held_out_loss` on a ~10% held-out slice of the dataset that was
+never trained on (never a random shuffle: consecutive steps of one game
 are near-duplicates, so a shuffled split leaks and flatters). That number
 answers "should I train more epochs?": if it's still falling alongside the
 training loss, yes (`--bc-epochs 30`); if it's flat or rising while the
@@ -598,6 +598,20 @@ training loss keeps dropping, the floor has been reached and more epochs
 would only memorize the dataset. The loss is a proxy anyway -- what matters
 is whether the pretrained policy plays like the teacher, which
 `sc2rl.inference.play` on the saved model shows directly.
+
+The held-out slice is *whole trailing episodes*, not a raw slice of the
+concatenated array, and spans at least two of them whenever there are
+enough to spare (`training/behavior_cloning.py`'s `_episode_validation_split`,
+using the `episode_ids` array `collect_demonstrations.py` saves alongside
+the observations). This matters more than it sounds like it should:
+confirmed live, one unusually long episode by itself exceeded an entire
+10%-of-samples target, so a plain tail slice landed inside that one game --
+the reported held-out loss was really just "how well does the policy
+predict this specific game," and it picked epoch 1 as best while later
+epochs' held-out loss climbed from 0.50 to over 1.3, nothing like the clean
+bottom-then-rise curve a genuine multi-game split gives. A dataset saved
+before `episode_ids` existed (or with fewer than 3 distinct episodes) falls
+back to the old plain tail slice automatically.
 
 A dataset is tied to the observation layout it was collected under: any
 change to `observation.py`'s features or to `env.grid` changes the vector

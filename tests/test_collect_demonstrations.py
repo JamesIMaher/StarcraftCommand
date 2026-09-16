@@ -22,14 +22,17 @@ def test_collect_produces_matching_length_arrays_with_correct_dtypes():
         return StubSC2Env(timesteps)
 
     config = Config()
-    observations, actions, masks = collect(config, episodes=2, env_factory=env_factory)
+    observations, actions, masks, episode_ids = collect(config, episodes=2, env_factory=env_factory)
 
-    assert len(observations) == len(actions) == len(masks) > 0
+    assert len(observations) == len(actions) == len(masks) == len(episode_ids) > 0
     assert observations.dtype.kind == "f"
     assert actions.dtype.kind == "i"
     assert masks.dtype == bool
+    assert episode_ids.dtype.kind == "i"
     assert observations.shape[1] > 0
     assert masks.shape[1] > 0
+    assert set(episode_ids) == {0, 1}  # exactly the 2 requested episodes
+    assert list(episode_ids) == sorted(episode_ids)  # non-decreasing: collection order
 
 
 def test_every_recorded_action_is_legal_under_its_own_recorded_mask():
@@ -53,7 +56,7 @@ def test_every_recorded_action_is_legal_under_its_own_recorded_mask():
         return StubSC2Env(timesteps)
 
     config = Config()
-    observations, actions, masks = collect(config, episodes=1, env_factory=env_factory)
+    observations, actions, masks, episode_ids = collect(config, episodes=1, env_factory=env_factory)
 
     for i in range(len(actions)):
         assert masks[i][actions[i]], f"step {i}: action {actions[i]} illegal under its own recorded mask"

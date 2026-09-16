@@ -15,6 +15,52 @@ import torch as th
 from sb3_contrib import MaskablePPO
 
 
+def _episode_validation_split(
+    episode_ids: np.ndarray, validation_fraction: float
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Hold out whole trailing episodes, spanning at least two of them
+    whenever there are enough episodes to do so, rather than a raw slice of
+    the concatenated array sized purely by sample count.
+
+    Confirmed necessary in practice: on a real dataset, one unusually long
+    episode alone exceeded the entire "held-out 10%" sample target, so a
+    plain tail slice landed entirely inside that single game. The reported
+    held-out loss was then just "how well does the policy predict this one
+    specific game" -- noisy enough that it picked epoch 1 as best while
+    later epochs' held-out loss climbed from 0.50 to over 1.3, rather than
+    showing the clear bottom-then-rise curve a genuine multi-game held-out
+    set gives.
+
+    Returns None (caller falls back to a plain tail slice) if there are
+    fewer than 3 distinct episodes to choose from -- too few to hold any
+    out meaningfully while still leaving something to train on."""
+    order: list[int] = []
+    seen: set[int] = set()
+    counts: dict[int, int] = {}
+    for raw in episode_ids:
+        eid = int(raw)
+        counts[eid] = counts.get(eid, 0) + 1
+        if eid not in seen:
+            seen.add(eid)
+            order.append(eid)
+    if len(order) < 3:
+        return None
+
+    target = len(episode_ids) * validation_fraction
+    val_episodes: list[int] = []
+    running = 0
+    for eid in reversed(order):
+        if len(val_episodes) >= len(order) - 1:
+            break  # always leave at least one episode to train on
+        val_episodes.append(eid)
+        running += counts[eid]
+        if running >= target and len(val_episodes) >= 2:
+            break
+
+    val_mask = np.isin(episode_ids, val_episodes)
+    return np.nonzero(~val_mask)[0], np.nonzero(val_mask)[0]
+
+
 def pretrain_with_behavior_cloning(
     model: MaskablePPO,
     observations: np.ndarray,
@@ -24,6 +70,7 @@ def pretrain_with_behavior_cloning(
     batch_size: int = 64,
     learning_rate: float = 1e-3,
     validation_fraction: float = 0.1,
+    episode_ids: np.ndarray | None = None,
 ) -> None:
     """The loss is the mean negative log-likelihood of the teacher's action:
     exp(-loss) is the average probability the policy assigns to what the
@@ -36,9 +83,14 @@ def pretrain_with_behavior_cloning(
     keeps falling means the floor has been reached (more epochs only
     memorize the dataset).
 
-    The split is by contiguous block, not a random shuffle: consecutive
-    steps of one game are near-duplicates, so a shuffled split leaks the
-    training set into the held-out set and reports a flattering number.
+    When `episode_ids` is given (collect_demonstrations.py saves it), the
+    split holds out whole trailing episodes -- see
+    _episode_validation_split for why that matters. Without it (an older
+    dataset saved before episode_ids existed, or too few distinct
+    episodes), the split falls back to a plain contiguous tail slice by
+    raw sample count; a random shuffle is never used for the split either
+    way, since consecutive steps of one game are near-duplicates and would
+    leak the training set into the held-out set.
 
     Early stopping: the weights from the epoch with the best held-out loss
     are what the policy ends up with, not the last epoch's. Confirmed
@@ -50,8 +102,17 @@ def pretrain_with_behavior_cloning(
     policy = model.policy
     optimizer = th.optim.Adam(policy.parameters(), lr=learning_rate)
     dataset_size = len(observations)
-    validation_size = int(dataset_size * validation_fraction) if dataset_size >= 20 else 0
-    train_size = dataset_size - validation_size
+
+    train_idx = val_idx = None
+    if episode_ids is not None:
+        split = _episode_validation_split(episode_ids, validation_fraction)
+        if split is not None:
+            train_idx, val_idx = split
+    if train_idx is None:
+        validation_size = int(dataset_size * validation_fraction) if dataset_size >= 20 else 0
+        train_idx = np.arange(dataset_size - validation_size)
+        val_idx = np.arange(dataset_size - validation_size, dataset_size)
+    train_size, validation_size = len(train_idx), len(val_idx)
 
     actions_tensor = th.as_tensor(actions, dtype=th.long, device=policy.device)
     masks_tensor = th.as_tensor(masks, dtype=th.bool, device=policy.device)
@@ -71,7 +132,7 @@ def pretrain_with_behavior_cloning(
     best_state = None
 
     for epoch in range(epochs):
-        permutation = np.random.permutation(train_size)
+        permutation = train_idx[np.random.permutation(train_size)]
         epoch_loss = 0.0
         num_batches = 0
         for start in range(0, train_size, batch_size):
@@ -85,9 +146,8 @@ def pretrain_with_behavior_cloning(
         line = f"BC pretrain epoch {epoch + 1}/{epochs}: loss={epoch_loss / max(num_batches, 1):.4f}"
         if validation_size:
             with th.no_grad():
-                held_out = np.arange(train_size, dataset_size)
                 val_loss = sum(
-                    batch_loss(held_out[s:s + batch_size]).item() * len(held_out[s:s + batch_size])
+                    batch_loss(val_idx[s:s + batch_size]).item() * len(val_idx[s:s + batch_size])
                     for s in range(0, validation_size, batch_size)
                 ) / validation_size
             line += f"  held_out_loss={val_loss:.4f}"
