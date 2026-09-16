@@ -592,6 +592,90 @@ def test_env_tracks_mobilization_with_hysteresis_across_steps():
         assert bool(env.action_masks()[far]) == expected
 
 
+def test_garrison_is_assigned_from_marines_nearest_home_and_capped_at_garrison_size():
+    # Regression test: every RL episode before this was added showed
+    # home_defense_penalty maxed out, win or loss, because the single "move
+    # the whole army" action could never hedge between offense and defense.
+    cc = fake.command_center(1, x=8, y=8)
+    marines = [
+        fake.marine(10, x=9, y=9),    # dist^2 = 2
+        fake.marine(11, x=20, y=20),  # dist^2 = 288
+        fake.marine(12, x=8, y=9),    # dist^2 = 1 (nearest)
+        fake.marine(13, x=56, y=56),  # farthest
+        fake.marine(14, x=10, y=10),  # dist^2 = 8
+    ]
+    ts0 = fake.make_timestep(units=[cc] + marines, minerals=0, food_cap=15)
+    config = EnvConfig()
+    config.garrison_size = 2
+    env, stub = make_env([ts0, ts0], config)
+    env.reset()
+    env.step(FixedAction.NO_OP)
+
+    assert env._garrison_tags == {12, 10}  # the two nearest home
+    sent = stub.received_actions[-1][0]
+    # The action this step was NO_OP (one call); everything after it is the
+    # garrison's own hold order (both use Attack_pt, so tell them apart by
+    # position in the list, not by function type).
+    garrison_calls = sent[1:]
+    assert {c.arguments[1][0] for c in garrison_calls} == {12, 10}
+    for c in garrison_calls:
+        assert list(c.arguments[2]) == [8.0, 8.0]  # held at the command center
+
+
+def test_garrison_membership_is_stable_and_backfills_on_death():
+    cc = fake.command_center(1, x=8, y=8)
+    m10 = fake.marine(10, x=9, y=9)
+    m12 = fake.marine(12, x=8, y=9)
+    m14 = fake.marine(14, x=10, y=10)
+    ts0 = fake.make_timestep(units=[cc, m10, m12, m14], minerals=0, food_cap=15)
+    # Marine 12 (garrisoned) died; a new marine spawned right at the CC.
+    ts1 = fake.make_timestep(units=[cc, m10, m14, fake.marine(20, x=8, y=8)], minerals=0, food_cap=15)
+    config = EnvConfig()
+    config.garrison_size = 2
+    env, _ = make_env([ts0, ts1, ts1], config)
+    env.reset()
+    env.step(FixedAction.NO_OP)
+    assert env._garrison_tags == {12, 10}
+
+    env.step(FixedAction.NO_OP)
+    assert 10 in env._garrison_tags  # stable -- not reassigned just because a slot opened
+    assert env._garrison_tags == {10, 20}  # backfilled with the nearest survivor to home
+
+
+def test_garrison_is_cleared_when_there_is_no_command_center():
+    ts0 = fake.make_timestep(units=[fake.marine(1, x=10, y=10)], minerals=0, food_cap=15)
+    env, _ = make_env([ts0, ts0], EnvConfig())
+    env.reset()
+    env.step(FixedAction.NO_OP)
+    assert env._garrison_tags == set()
+
+
+def test_move_action_never_sends_garrisoned_marines_to_the_sector_target():
+    cc = fake.command_center(1, x=8, y=8)
+    marines = [fake.marine(i, x=8, y=8) for i in range(20)]  # all at the base, well above the advance floor
+    ts0 = fake.make_timestep(units=[cc] + marines, minerals=0, food_cap=15)
+    config = EnvConfig()
+    config.garrison_size = 4
+    config.masking.min_marines_to_advance = 20
+    env, stub = make_env([ts0, ts0], config)
+    env.reset()
+
+    far_action = env.action_spec.move_action_for_sector(env.grid.num_sectors - 1)
+    env.step(far_action)
+
+    assert len(env._garrison_tags) == 4
+    sent = stub.received_actions[-1][0]
+    # The sweep call for each mover comes first (calls + garrison_calls, in
+    # that order); both kinds are Attack_pt, so position -- not function
+    # type -- is what tells a sweep order apart from a garrison hold order.
+    assert len(sent) == 20
+    moved_tags = {c.arguments[1][0] for c in sent[:20 - 4]}
+    garrisoned_tags = {c.arguments[1][0] for c in sent[20 - 4:]}
+    assert len(moved_tags) == 20 - 4
+    assert garrisoned_tags == env._garrison_tags
+    assert env._garrison_tags.isdisjoint(moved_tags)
+
+
 def test_scouting_bonus_awarded_once_per_newly_seen_enemy_sector():
     ts0 = fake.make_timestep(minerals=0, food_cap=15)  # no enemies visible yet
     ts1 = fake.make_timestep(units=[fake.enemy_unit(1, fake.UNIT_MARINE, x=56, y=56)], minerals=0, food_cap=15)

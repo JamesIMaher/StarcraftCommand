@@ -230,6 +230,20 @@ class EnvConfig:
     # attack target -- all in the raw frame -- so a coordinate-frame or
     # reachability problem can be seen instead of guessed at.
     pathing_debug_path: str | None = None
+    # Marines permanently held back at the base whenever a move order fires,
+    # so an offensive never strips home of every defender -- a fixed small
+    # garrison, not a policy choice, so it applies uniformly to the scripted
+    # teacher and the RL-trained policy alike without any action-space or
+    # observation change (see SC2FightEnv._update_garrison). Every episode
+    # observed before this was added showed home_defense_penalty maxed out
+    # in EVERY game, win or loss: the single "move the whole army" action
+    # structurally could not hedge between offense and defense. Maintained
+    # as a stable set of marine tags (nearest-to-home, topped up as marines
+    # die) rather than reassigned randomly, so the same few marines hold the
+    # position instead of churning. Deliberately small relative to
+    # masking.min_marines_to_advance/min_marines_to_continue -- most of the
+    # army should always be out fighting, not turtling.
+    garrison_size: int = 4
     grid: GridConfig = field(default_factory=GridConfig)
     masking: MaskConfig = field(default_factory=MaskConfig)
     reward: RewardConfig = field(default_factory=RewardConfig)
@@ -251,6 +265,7 @@ class EnvConfig:
             "max_game_loop_norm": defaults.max_game_loop_norm,
             "visualize": defaults.visualize,
             "pathing_debug_path": defaults.pathing_debug_path,
+            "garrison_size": defaults.garrison_size,
         }
         scalar_fields.update(data)
         return EnvConfig(grid=grid, masking=masking, reward=reward, **scalar_fields)

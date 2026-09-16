@@ -112,9 +112,28 @@ which then taught the policy to avoid moving at all rather than to wait for
 mass. Moving *to* home (e.g. recalling a scattered force, or defending)
 still only needs the lower `min_marines_to_move` bar.
 
+**Garrison.** Every move order -- whichever sector it targets -- is only
+ever given to the army *minus* a small standing garrison
+(`env.garrison_size`, default 4): those marines are held at the command
+center and simply excluded from the sweep, so an offensive can never strip
+the base of every defender. This isn't a policy choice (the action space
+didn't change), it's enforced by `SC2FightEnv._update_garrison()`
+underneath whatever action gets chosen, so it applies identically to the
+scripted teacher and the RL-trained policy without touching the BC dataset
+or the observation. Membership is a stable set of marine tags -- nearest to
+the command center, topped up from the next-nearest survivor as garrisoned
+marines die -- not reassigned from scratch each step, so the same few
+marines hold the position instead of churning. This exists because every
+RL episode observed before it was added showed the home-defense penalty
+maxed out, win or loss: the single "move the whole army" action structurally
+could not hedge between offense and defense, so a long game's inevitable
+opportunistic raid on an empty base was often what actually decided a
+loss the search-and-destroy should have won outright.
+
 **Where a move actually goes.** `action_translation.py` turns
-`move_army_to_sector_i` into one attack-move per marine (with a little
-jitter so they don't all path to the identical point). If the sector holds
+`move_army_to_sector_i` into one attack-move per non-garrisoned marine
+(with a little jitter so they don't all path to the identical point). If
+the sector holds
 a *known enemy structure* (visible, or a fog snapshot of one seen earlier),
 the target is the structure itself -- the one nearest the army -- so "go to
 the sector with the building" resolves to "go to the building." A move to
@@ -614,6 +633,7 @@ All under `env:` in `configs/default.yaml`:
 
 | Key | Default | What it does |
 |---|---|---|
+| `garrison_size` | `4` | Marines permanently held at the command center, excluded from every move order |
 | `masking.min_marines_to_move` | `4` | Movement to the HOME sector illegal below this many marines |
 | `masking.min_marines_to_advance` | `20` | Movement to any OTHER sector illegal below this many marines (to launch an offensive) |
 | `masking.min_marines_to_continue` | `8` | Once launched ("mobilized"), advancing stays legal down to this many -- hysteresis |

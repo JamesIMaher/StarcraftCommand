@@ -10,6 +10,10 @@ env:
   # One-time ASCII dump of the pathing grid / units / sector targets at the
   # first reset -- see EnvConfig.pathing_debug_path.
   pathing_debug_path: pathing_debug.txt
+  # Marines permanently held back at the base -- see EnvConfig.garrison_size
+  # in config.py. Most of the army should always be out fighting; this is
+  # only enough to blunt a raid on an empty base, not to turtle.
+  garrison_size: 4
   # The grid is laid over the map's PLAYABLE area (read from the game at
   # reset), which on Simple64 is a ~43x43 square in the raw frame. 6x6 (36
   # sectors) gives ~7.1x7.1 cells, half-diagonal ~5 -- comfortably within a

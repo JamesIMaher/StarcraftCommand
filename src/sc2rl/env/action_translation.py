@@ -58,7 +58,16 @@ class ActionTranslator:
     # from its center is adjacent to it, i.e. in a marine's weapon range.
     _STRUCTURE_SNAP_RADIUS = 6.0
 
-    def translate(self, action_index: int, state: GameState, orientation: SpawnOrientation) -> list:
+    def translate(
+        self,
+        action_index: int,
+        state: GameState,
+        orientation: SpawnOrientation,
+        garrison_tags: frozenset[int] = frozenset(),
+    ) -> list:
+        """`garrison_tags` (see SC2FightEnv._update_garrison) are marines a
+        move action must never touch -- they hold the base regardless of
+        which sector is targeted, including a "recall home" order."""
         if action_index == FixedAction.NO_OP:
             return [sc2_actions.RAW_FUNCTIONS.no_op()]
         if action_index == FixedAction.BUILD_SUPPLY_DEPOT:
@@ -69,11 +78,17 @@ class ActionTranslator:
             return self._train_marine(state)
         if self.spec.is_move_action(action_index):
             sector = self.spec.sector_for_move_action(action_index)
-            return self._move_army(state, sector, orientation)
+            return self._move_army(state, sector, orientation, garrison_tags)
         raise ValueError(f"unknown action index: {action_index}")
 
-    def translate_named(self, action_name: str, state: GameState, orientation: SpawnOrientation) -> list:
-        return self.translate(self.spec.index_for_name(action_name), state, orientation)
+    def translate_named(
+        self,
+        action_name: str,
+        state: GameState,
+        orientation: SpawnOrientation,
+        garrison_tags: frozenset[int] = frozenset(),
+    ) -> list:
+        return self.translate(self.spec.index_for_name(action_name), state, orientation, garrison_tags)
 
     def _pick_scv(self, state: GameState) -> UnitInfo | None:
         # Deliberately not filtered to idle_scvs: a build order interrupts
@@ -107,10 +122,13 @@ class ActionTranslator:
         self._barracks_cursor = (self._barracks_cursor + 1) % len(complete)
         return [sc2_actions.RAW_FUNCTIONS.Train_Marine_quick("now", barracks.tag)]
 
-    def _move_army(self, state: GameState, sector: int, orientation: SpawnOrientation) -> list:
-        if not state.marines:
+    def _move_army(
+        self, state: GameState, sector: int, orientation: SpawnOrientation, garrison_tags: frozenset[int]
+    ) -> list:
+        movers = [m for m in state.marines if m.tag not in garrison_tags]
+        if not movers:
             return [sc2_actions.RAW_FUNCTIONS.no_op()]
-        target = self._known_structure_target(state, sector, orientation)
+        target = self._known_structure_target(state, sector, orientation, movers)
         cc = state.command_center_pos
         if target is None and cc is not None and sector == home_sector(cc, self.spec.grid, orientation):
             # "Recall/defend home" means the base itself, not the home
@@ -130,7 +148,7 @@ class ActionTranslator:
             target = orientation.to_world(*self.spec.grid.sector_center(sector))
         wx, wy = target
         calls = []
-        for marine in state.marines:
+        for marine in movers:
             tx, ty = self._clamp_to_playable(
                 wx + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE),
                 wy + self._rng.uniform(-_MOVE_VARIANCE, _MOVE_VARIANCE),
@@ -139,24 +157,26 @@ class ActionTranslator:
         return calls
 
     def _known_structure_target(
-        self, state: GameState, sector: int, orientation: SpawnOrientation
+        self, state: GameState, sector: int, orientation: SpawnOrientation, movers: list[UnitInfo]
     ) -> tuple[float, float] | None:
         """If the target sector holds a known enemy structure (visible, or a
         fog snapshot of one seen earlier), attack-move at the structure
-        itself -- the one nearest the army -- instead of the sector's center.
-        A building's own position is pathable by construction, which is what
-        makes this the fix for the unreachable-corner problem: the policy now
-        sees known structures per sector in its observation, so "go to the
-        sector with the building" resolves to "go to the building"."""
+        itself -- the one nearest the moving army -- instead of the sector's
+        center. A building's own position is pathable by construction, which
+        is what makes this the fix for the unreachable-corner problem: the
+        policy now sees known structures per sector in its observation, so
+        "go to the sector with the building" resolves to "go to the
+        building". `movers` (not the garrison, which isn't going anywhere)
+        is what "nearest the army" means here."""
         in_sector = [
             u for u in state.enemy_structures
             if self.spec.grid.sector_of(*orientation.to_canonical(u.x, u.y)) == sector
         ]
         if not in_sector:
             return None
-        n = len(state.marines)
-        army_x = sum(m.x for m in state.marines) / n
-        army_y = sum(m.y for m in state.marines) / n
+        n = len(movers)
+        army_x = sum(m.x for m in movers) / n
+        army_y = sum(m.y for m in movers) / n
         for structure in sorted(in_sector, key=lambda u: (u.x - army_x) ** 2 + (u.y - army_y) ** 2):
             if self.pathing is None:
                 return structure.x, structure.y

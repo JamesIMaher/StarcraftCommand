@@ -103,6 +103,7 @@ class SC2FightEnv(gym.Env):
             min_marines_to_continue=config.masking.min_marines_to_continue,
         )
         self._mobilized = False
+        self._garrison_tags: set[int] = set()
         self._translator = ActionTranslator(self.action_spec)
         self._sc2_env = None
         self._state: GameState | None = None
@@ -159,6 +160,30 @@ class SC2FightEnv(gym.Env):
         elif count < self.masking_config.min_marines_to_continue:
             self._mobilized = False
 
+    def _update_garrison(self) -> list:
+        """Maintain garrison_size marines held back at the command center --
+        see EnvConfig.garrison_size. Membership is a stable set of tags
+        (dead ones dropped, topped up from the marines nearest home) rather
+        than reassigned from scratch each step, so the same few marines hold
+        the position instead of churning. Returns raw calls for any newly
+        assigned marines only -- already-assigned ones keep the standing
+        order that got them there and are simply excluded from every other
+        move order (see ActionTranslator._move_army)."""
+        cc = self._state.command_center_pos
+        if cc is None:
+            self._garrison_tags = set()
+            return []
+        marine_tags = {m.tag for m in self._state.marines}
+        self._garrison_tags &= marine_tags
+        target_size = min(self.config.garrison_size, len(self._state.marines))
+        if len(self._garrison_tags) >= target_size:
+            return []
+        candidates = [m for m in self._state.marines if m.tag not in self._garrison_tags]
+        candidates.sort(key=lambda m: (m.x - cc[0]) ** 2 + (m.y - cc[1]) ** 2)
+        newly_assigned = candidates[: target_size - len(self._garrison_tags)]
+        self._garrison_tags.update(m.tag for m in newly_assigned)
+        return [sc2_actions.RAW_FUNCTIONS.Attack_pt("now", m.tag, cc) for m in newly_assigned]
+
     @property
     def unreachable_sectors(self) -> frozenset[int]:
         """Sectors with no pathable ground this episode (see pathing.py) --
@@ -179,6 +204,7 @@ class SC2FightEnv(gym.Env):
         self._state = GameState.from_observation(timesteps[0])
         self._mobilized = False
         self._update_mobilized()
+        self._garrison_tags = set()
         self._orientation = self._compute_orientation(self._state)
         self._pathing = self._raw_pathing = self._read_pathing(timesteps[0])
         if self._pathing is not None and self._state.command_center_pos is not None:
@@ -412,8 +438,9 @@ class SC2FightEnv(gym.Env):
         if not legal[action]:
             action = int(FixedAction.NO_OP)
 
-        calls = self._translator.translate(action, self._state, self._orientation)
-        timesteps = self._sc2_env.step([calls])
+        garrison_calls = self._update_garrison()
+        calls = self._translator.translate(action, self._state, self._orientation, frozenset(self._garrison_tags))
+        timesteps = self._sc2_env.step([calls + garrison_calls])
         ts = timesteps[0]
 
         self._state = GameState.from_observation(ts)

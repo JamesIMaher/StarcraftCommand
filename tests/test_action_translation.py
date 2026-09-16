@@ -185,6 +185,33 @@ def test_known_structure_target_is_snapped_to_reachable_ground_next_to_it():
     assert abs(target_y - 8.5) <= 1.0
 
 
+def test_move_army_excludes_garrisoned_marines_from_the_sweep():
+    spec = make_spec()
+    translator = ActionTranslator(spec, rng=random.Random(0))
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.marines.append(fake.marine(1, x=30, y=30))
+    state.marines.append(fake.marine(2, x=30, y=30))
+    state.marines.append(fake.marine(3, x=30, y=30))
+
+    calls = translator.translate(
+        spec.move_action_for_sector(5), state, identity_orientation(spec), garrison_tags=frozenset({2}),
+    )
+    moved_tags = {c.arguments[1][0] for c in calls}
+    assert moved_tags == {1, 3}
+
+
+def test_move_army_no_ops_when_every_marine_is_garrisoned():
+    spec = make_spec()
+    translator = ActionTranslator(spec, rng=random.Random(0))
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.marines.append(fake.marine(1, x=30, y=30))
+
+    calls = translator.translate(
+        spec.move_action_for_sector(5), state, identity_orientation(spec), garrison_tags=frozenset({1}),
+    )
+    assert calls[0].function == sc2_actions.RAW_FUNCTIONS.no_op.id
+
+
 def test_move_army_ignores_structures_outside_the_target_sector():
     spec = make_spec()
     translator = ActionTranslator(spec, rng=random.Random(0))
