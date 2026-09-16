@@ -676,6 +676,156 @@ def test_move_action_never_sends_garrisoned_marines_to_the_sector_target():
     assert env._garrison_tags.isdisjoint(moved_tags)
 
 
+def test_assign_to_player_control_by_count_picks_nearest_home_and_excludes_garrison():
+    cc = fake.command_center(1, x=8, y=8)
+    marines = [
+        fake.marine(10, x=9, y=9),    # dist^2 = 2 -- nearest available
+        fake.marine(11, x=20, y=20),  # far
+        fake.marine(12, x=8, y=9),    # dist^2 = 1 -- but this is the garrison
+    ]
+    ts0 = fake.make_timestep(units=[cc] + marines, minerals=0, food_cap=15)
+    config = EnvConfig()
+    config.garrison_size = 1
+    env, _ = make_env([ts0, ts0], config)
+    env.reset()
+    env.step(FixedAction.NO_OP)  # lets the garrison claim tag 12 first
+    assert env.player_controlled_tags == frozenset()
+
+    calls = env.assign_to_player_control(target_sector=5, count=1)
+    assert env.player_controlled_tags == frozenset({10})  # nearest home among non-garrison
+    assert len(calls) == 1
+    assert calls[0].arguments[1][0] == 10
+
+
+def test_player_controlled_marines_are_excluded_from_the_next_autonomous_move():
+    cc = fake.command_center(1, x=8, y=8)
+    marines = [fake.marine(i, x=8, y=8) for i in range(20)]
+    ts0 = fake.make_timestep(units=[cc] + marines, minerals=0, food_cap=15)
+    config = EnvConfig()
+    config.garrison_size = 4
+    config.masking.min_marines_to_advance = 20
+    env, stub = make_env([ts0, ts0], config)
+    env.reset()
+    env.step(FixedAction.NO_OP)  # establishes the garrison (tags 0-3)
+
+    env.assign_to_player_control(target_sector=5, tags={4, 5})
+    far_action = env.action_spec.move_action_for_sector(env.grid.num_sectors - 1)
+    env.step(far_action)
+
+    sent = stub.received_actions[-1][0]
+    moved_tags = {c.arguments[1][0] for c in sent if c.function == sc2_actions.RAW_FUNCTIONS.Attack_pt.id}
+    assert moved_tags.isdisjoint({4, 5})  # player-controlled, untouched by the group-move
+    assert moved_tags.isdisjoint(env._garrison_tags)
+
+
+def test_release_from_player_control_all_returns_everyone_to_the_pool():
+    ts0 = fake.make_timestep(
+        units=[fake.command_center(1, x=8, y=8), fake.marine(10, x=8, y=8), fake.marine(11, x=8, y=8)],
+        minerals=0, food_cap=15,
+    )
+    env, _ = make_env([ts0, ts0], EnvConfig())
+    env.reset()
+    env.assign_to_player_control(target_sector=5, tags={10, 11})
+    assert env.player_controlled_tags == frozenset({10, 11})
+
+    released = env.release_from_player_control()
+    assert released == frozenset({10, 11})
+    assert env.player_controlled_tags == frozenset()
+
+
+def test_release_from_player_control_by_sector_releases_only_units_there():
+    ts0 = fake.make_timestep(
+        units=[
+            fake.command_center(1, x=8, y=8),
+            fake.marine(10, x=8, y=8),   # sector 0
+            fake.marine(11, x=56, y=56),  # far sector
+        ],
+        minerals=0, food_cap=15,
+    )
+    env, _ = make_env([ts0, ts0], EnvConfig())
+    env.reset()
+    env.assign_to_player_control(target_sector=0, tags={10, 11})
+
+    far_sector = env.grid.num_sectors - 1
+    released = env.release_from_player_control(sector=far_sector)
+
+    assert released == frozenset({11})
+    assert env.player_controlled_tags == frozenset({10})
+
+
+def test_release_from_player_control_most_recent_releases_only_the_last_dispatch():
+    ts0 = fake.make_timestep(
+        units=[fake.command_center(1, x=8, y=8), fake.marine(10, x=8, y=8), fake.marine(11, x=8, y=8)],
+        minerals=0, food_cap=15,
+    )
+    env, _ = make_env([ts0, ts0], EnvConfig())
+    env.reset()
+    env.assign_to_player_control(target_sector=0, tags={10})
+    env.assign_to_player_control(target_sector=0, tags={11})
+
+    released = env.release_from_player_control(most_recent=True)
+
+    assert released == frozenset({11})
+    assert env.player_controlled_tags == frozenset({10})
+
+
+def test_player_controlled_tags_are_pruned_when_the_marine_dies():
+    # Pruning reads self._state at the top of step() -- the state as of the
+    # START of that step -- same lag as the garrison's own dead-tag pruning,
+    # so a death shows up in the prune one step after the observation
+    # reporting it arrives, not the same step.
+    ts0 = fake.make_timestep(
+        units=[fake.command_center(1, x=8, y=8), fake.marine(10, x=8, y=8), fake.marine(11, x=8, y=8)],
+        minerals=0, food_cap=15,
+    )
+    ts1 = fake.make_timestep(
+        units=[fake.command_center(1, x=8, y=8), fake.marine(10, x=8, y=8)],  # 11 died
+        minerals=0, food_cap=15,
+    )
+    env, _ = make_env([ts0, ts1, ts1], EnvConfig())
+    env.reset()
+    env.assign_to_player_control(target_sector=0, tags={10, 11})
+    env.step(FixedAction.NO_OP)  # self._state becomes ts1 (11 gone) at the END of this call
+    assert env.player_controlled_tags == frozenset({10, 11})  # prune this step still saw the old state
+    env.step(FixedAction.NO_OP)  # this step's prune now sees ts1
+    assert env.player_controlled_tags == frozenset({10})
+
+
+def test_ban_action_forces_the_action_illegal_only_via_apply_bans():
+    ts = fake.make_timestep(units=[fake.scv(1, x=5, y=5)], minerals=500, food_cap=15)
+    env, _ = make_env([ts, ts], EnvConfig())
+    env.reset()
+    assert env.action_masks()[FixedAction.BUILD_SUPPLY_DEPOT]  # legal before any ban
+
+    env.ban_action("build_supply_depot")
+    assert env.banned_actions == frozenset({"build_supply_depot"})
+    banned_mask = env.apply_bans(env.action_masks())
+    assert not banned_mask[FixedAction.BUILD_SUPPLY_DEPOT]
+    # action_masks() itself is never touched by a ban -- only apply_bans()'s
+    # output is, and that's opt-in for whoever calls it (the autonomous
+    # policy's own selection, never a player command).
+    assert env.action_masks()[FixedAction.NO_OP]
+
+    env.allow_action("build_supply_depot")
+    assert env.banned_actions == frozenset()
+
+
+def test_ban_action_refuses_to_ban_no_op():
+    env, _ = make_env([fake.make_timestep(minerals=0, food_cap=15)], EnvConfig())
+    env.reset()
+    env.ban_action("no_op")
+    assert env.banned_actions == frozenset()
+
+
+def test_banned_actions_reset_between_episodes():
+    ts = fake.make_timestep(minerals=0, food_cap=15)
+    env, _ = make_env([ts, ts], EnvConfig())
+    env.reset()
+    env.ban_action("build_supply_depot")
+    env.reset()
+    assert env.banned_actions == frozenset()
+
+
 def test_scouting_bonus_awarded_once_per_newly_seen_enemy_sector():
     ts0 = fake.make_timestep(minerals=0, food_cap=15)  # no enemies visible yet
     ts1 = fake.make_timestep(units=[fake.enemy_unit(1, fake.UNIT_MARINE, x=56, y=56)], minerals=0, food_cap=15)

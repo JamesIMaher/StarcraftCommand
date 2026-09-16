@@ -18,6 +18,8 @@ def describe_state_for_llm(
     orientation: SpawnOrientation,
     mobilized: bool = False,
     garrison_size: int = 0,
+    player_controlled_count: int = 0,
+    banned_actions: tuple[str, ...] = (),
 ) -> str:
     home = home_sector(state.command_center_pos, grid, orientation)
     lines = [
@@ -27,6 +29,7 @@ def describe_state_for_llm(
         f"Minerals: {state.minerals}. Supply: {state.food_used}/{state.food_cap}.",
         f"Marines: {len(state.marines)} total"
         + (f", including {garrison_size} permanently held at home as a garrison" if garrison_size else "")
+        + (f", {player_controlled_count} currently under direct PLAYER control" if player_controlled_count else "")
         + ".",
         f"The army is {'' if mobilized else 'NOT '}currently mobilized for an offensive.",
         f"SCVs: {len(state.scvs)}. Supply depots: {len(state.complete_supply_depots)} complete, "
@@ -34,6 +37,11 @@ def describe_state_for_llm(
         f"Barracks: {len(state.complete_barracks)} complete, "
         f"{len(state.barracks) - len(state.complete_barracks)} building.",
     ]
+    if banned_actions:
+        lines.append(
+            f"Standing player directives currently BAN the autonomous policy from choosing: "
+            f"{sorted(banned_actions)}. These never restrict the player's own explicit commands."
+        )
 
     if state.enemies:
         enemy_sectors = sorted(sectors_of(state.enemies, grid, orientation))

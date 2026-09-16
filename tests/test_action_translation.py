@@ -194,7 +194,7 @@ def test_move_army_excludes_garrisoned_marines_from_the_sweep():
     state.marines.append(fake.marine(3, x=30, y=30))
 
     calls = translator.translate(
-        spec.move_action_for_sector(5), state, identity_orientation(spec), garrison_tags=frozenset({2}),
+        spec.move_action_for_sector(5), state, identity_orientation(spec), reserved_tags=frozenset({2}),
     )
     moved_tags = {c.arguments[1][0] for c in calls}
     assert moved_tags == {1, 3}
@@ -207,7 +207,7 @@ def test_move_army_no_ops_when_every_marine_is_garrisoned():
     state.marines.append(fake.marine(1, x=30, y=30))
 
     calls = translator.translate(
-        spec.move_action_for_sector(5), state, identity_orientation(spec), garrison_tags=frozenset({1}),
+        spec.move_action_for_sector(5), state, identity_orientation(spec), reserved_tags=frozenset({1}),
     )
     assert calls[0].function == sc2_actions.RAW_FUNCTIONS.no_op.id
 

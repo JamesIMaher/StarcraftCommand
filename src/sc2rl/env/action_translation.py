@@ -10,6 +10,7 @@ PySC2 function IDs.
 from __future__ import annotations
 
 import random
+from typing import Collection
 
 from pysc2.lib import actions as sc2_actions
 
@@ -63,11 +64,14 @@ class ActionTranslator:
         action_index: int,
         state: GameState,
         orientation: SpawnOrientation,
-        garrison_tags: frozenset[int] = frozenset(),
+        reserved_tags: frozenset[int] = frozenset(),
     ) -> list:
-        """`garrison_tags` (see SC2FightEnv._update_garrison) are marines a
-        move action must never touch -- they hold the base regardless of
-        which sector is targeted, including a "recall home" order."""
+        """`reserved_tags` -- the garrison, plus any marines currently under
+        direct player control (SC2FightEnv.player_controlled_tags) -- are
+        marines the AUTONOMOUS group-move must never touch, regardless of
+        which sector is targeted, including a "recall home" order. A
+        player's own unit-dispatch command uses `move_specific()` directly
+        instead of going through this reservation at all."""
         if action_index == FixedAction.NO_OP:
             return [sc2_actions.RAW_FUNCTIONS.no_op()]
         if action_index == FixedAction.BUILD_SUPPLY_DEPOT:
@@ -78,7 +82,7 @@ class ActionTranslator:
             return self._train_marine(state)
         if self.spec.is_move_action(action_index):
             sector = self.spec.sector_for_move_action(action_index)
-            return self._move_army(state, sector, orientation, garrison_tags)
+            return self._move_army(state, sector, orientation, reserved_tags)
         raise ValueError(f"unknown action index: {action_index}")
 
     def translate_named(
@@ -86,9 +90,9 @@ class ActionTranslator:
         action_name: str,
         state: GameState,
         orientation: SpawnOrientation,
-        garrison_tags: frozenset[int] = frozenset(),
+        reserved_tags: frozenset[int] = frozenset(),
     ) -> list:
-        return self.translate(self.spec.index_for_name(action_name), state, orientation, garrison_tags)
+        return self.translate(self.spec.index_for_name(action_name), state, orientation, reserved_tags)
 
     def _pick_scv(self, state: GameState) -> UnitInfo | None:
         # Deliberately not filtered to idle_scvs: a build order interrupts
@@ -123,9 +127,21 @@ class ActionTranslator:
         return [sc2_actions.RAW_FUNCTIONS.Train_Marine_quick("now", barracks.tag)]
 
     def _move_army(
-        self, state: GameState, sector: int, orientation: SpawnOrientation, garrison_tags: frozenset[int]
+        self, state: GameState, sector: int, orientation: SpawnOrientation, reserved_tags: frozenset[int]
     ) -> list:
-        movers = [m for m in state.marines if m.tag not in garrison_tags]
+        tags = {m.tag for m in state.marines if m.tag not in reserved_tags}
+        return self.move_specific(state, tags, sector, orientation)
+
+    def move_specific(
+        self, state: GameState, tags: Collection[int], sector: int, orientation: SpawnOrientation
+    ) -> list:
+        """Attack-move exactly these marine tags to `sector`, using the same
+        pathing-aware, known-structure-aware targeting the autonomous
+        group-move uses -- the fix that stopped marines walking into cliffs
+        applies identically to a player-directed dispatch. `_move_army` is a
+        thin wrapper of this (tags = everyone not reserved); a player's
+        unit-dispatch command calls this directly with its own tag subset."""
+        movers = [m for m in state.marines if m.tag in tags]
         if not movers:
             return [sc2_actions.RAW_FUNCTIONS.no_op()]
         target = self._known_structure_target(state, sector, orientation, movers)

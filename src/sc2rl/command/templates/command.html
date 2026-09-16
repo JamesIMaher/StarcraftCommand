@@ -9,27 +9,54 @@
   #text { flex: 1; font-size: 1rem; padding: 0.4rem; }
   button { font-size: 1rem; padding: 0.4rem 0.8rem; cursor: pointer; }
   #mic.listening { background: #d33; color: white; }
-  #log { list-style: none; padding: 0; margin-top: 1rem; }
+  h2 { font-size: 1rem; margin: 1.5rem 0 0.5rem; }
+
+  #units { list-style: none; padding: 0; margin: 0; }
+  #units li { display: flex; justify-content: space-between; align-items: center;
+              padding: 0.3rem 0.6rem; border-bottom: 1px solid #eee; }
+  #units .empty { color: #888; padding: 0.3rem 0.6rem; }
+  #units button, #release-all { font-size: 0.85rem; padding: 0.15rem 0.5rem; }
+
+  #directives { list-style: none; padding: 0; margin: 0; }
+  #directives li { padding: 0.3rem 0.6rem; border-bottom: 1px solid #eee; color: #8a6d00; }
+  #directives .empty { color: #888; padding: 0.3rem 0.6rem; }
+
+  #log { list-style: none; padding: 0; margin-top: 0.5rem; max-height: 20rem; overflow-y: auto; }
   #log li { padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
   #log li.you { color: #555; }
   #log li.ok { color: #146c2e; }
   #log li.decline { color: #8a6d00; }
   #log li.error { color: #a30000; }
+  #log li.denied { color: #a30000; font-style: italic; }
 </style>
 </head>
 <body>
   <h1>Command Console</h1>
-  <p>Tell the army what to do -- one instruction at a time. It interrupts autonomous
-  play for a single action, then control goes straight back to the trained model.</p>
+  <p>Tell the army what to do. A one-off instruction interrupts autonomous play for a
+  single action, then control goes straight back to the trained model. A unit dispatch
+  or a standing directive persists until you release it.</p>
   <div id="row">
     <input id="text" type="text" placeholder="e.g. return the marines to base" autofocus>
     <button id="send">Send</button>
     <button id="mic">Mic</button>
   </div>
+
+  <h2>Units under your control</h2>
+  <ul id="units"><li class="empty">None -- everything is under AI control.</li></ul>
+  <button id="release-all" style="display:none">Release all to AI control</button>
+
+  <h2>Standing directives</h2>
+  <ul id="directives"><li class="empty">None.</li></ul>
+
+  <h2>Activity</h2>
   <ul id="log"></ul>
+
   <script>
     const textEl = document.getElementById('text');
     const logEl = document.getElementById('log');
+    const unitsEl = document.getElementById('units');
+    const directivesEl = document.getElementById('directives');
+    const releaseAllBtn = document.getElementById('release-all');
 
     function log(message, cls) {
       const li = document.createElement('li');
@@ -37,6 +64,28 @@
       if (cls) li.className = cls;
       logEl.prepend(li);
     }
+
+    async function releaseUnits(body) {
+      try {
+        const res = await fetch('/units/release', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          log('Error: ' + (data.error || res.statusText), 'error');
+          return;
+        }
+        if (data.released && data.released.length) {
+          log('Released ' + JSON.stringify(data.released) + ' to AI control.', 'ok');
+        }
+      } catch (err) {
+        log('Request failed: ' + err, 'error');
+      }
+    }
+
+    releaseAllBtn.addEventListener('click', () => releaseUnits({}));
 
     async function send() {
       const text = textEl.value.trim();
@@ -59,10 +108,10 @@
         log('Request failed: ' + err, 'error');
         return;
       }
-      if (data.action_index === null) {
+      if (data.kind === 'decline') {
         log('Declined: ' + data.message, 'decline');
       } else {
-        log('Did ' + data.action_name + ': ' + data.message, 'ok');
+        log((data.message || 'Done.'), 'ok');
       }
     }
 
@@ -87,6 +136,69 @@
       micButton.disabled = true;
       micButton.title = 'Speech recognition not supported in this browser (use Chrome or Edge)';
     }
+
+    async function pollState() {
+      try {
+        const res = await fetch('/state');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        const units = data.player_controlled_units || [];
+        unitsEl.innerHTML = '';
+        if (!units.length) {
+          unitsEl.innerHTML = '<li class="empty">None -- everything is under AI control.</li>';
+        } else {
+          for (const tag of units) {
+            const li = document.createElement('li');
+            const label = document.createElement('span');
+            label.textContent = 'Marine #' + tag;
+            const btn = document.createElement('button');
+            btn.textContent = 'Release';
+            btn.addEventListener('click', () => releaseUnits({ tags: [tag] }));
+            li.append(label, btn);
+            unitsEl.appendChild(li);
+          }
+        }
+        releaseAllBtn.style.display = units.length ? '' : 'none';
+
+        const banned = data.banned_actions || [];
+        directivesEl.innerHTML = '';
+        if (!banned.length) {
+          directivesEl.innerHTML = '<li class="empty">None.</li>';
+        } else {
+          for (const name of banned) {
+            const li = document.createElement('li');
+            li.textContent = 'BANNED: ' + name;
+            directivesEl.appendChild(li);
+          }
+        }
+      } catch (err) {
+        // Transient network hiccups shouldn't spam the log -- just skip this tick.
+      }
+    }
+
+    let lastEventId = 0;
+    async function pollEvents() {
+      try {
+        const res = await fetch('/events?since=' + lastEventId);
+        if (!res.ok) return;
+        const data = await res.json();
+        for (const event of data.events) {
+          lastEventId = Math.max(lastEventId, event.id);
+          if (event.kind === 'denied') {
+            log('DENIED -- ' + event.message, 'denied');
+          } else {
+            log(event.message, 'ok');
+          }
+        }
+      } catch (err) {
+        // Same as above -- skip this tick on a transient failure.
+      }
+    }
+
+    pollState();
+    setInterval(pollState, 2000);
+    setInterval(pollEvents, 2000);
   </script>
 </body>
 </html>

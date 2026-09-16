@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import sys
+from typing import Collection
 
 # NOTE: PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION is set in sc2rl/__init__.py,
 # which runs before this module -- see that file for why. Anything importing
@@ -105,6 +106,16 @@ class SC2FightEnv(gym.Env):
         )
         self._mobilized = False
         self._garrison_tags: set[int] = set()
+        # Marines under direct player control (see assign_to_player_control),
+        # excluded from the autonomous group-move exactly like the garrison
+        # -- a second instance of the same "reserved, external to the RL
+        # action space" pattern.
+        self._player_controlled_tags: set[int] = set()
+        self._last_dispatch_tags: set[int] = set()
+        # Action names the autonomous policy is currently forbidden from
+        # choosing (see ban_action/apply_bans) -- never applied to a
+        # player's own explicit command, only to model.predict()'s choice.
+        self._banned_actions: set[str] = set()
         self._translator = ActionTranslator(self.action_spec)
         self._sc2_env = None
         self._state: GameState | None = None
@@ -153,6 +164,107 @@ class SC2FightEnv(gym.Env):
         -- the hysteresis input to the movement mask. Public so the
         demonstration collector can hand it to the scripted teacher."""
         return self._mobilized
+
+    @property
+    def player_controlled_tags(self) -> frozenset[int]:
+        """Marines currently reserved for direct player control -- see
+        assign_to_player_control(). Public for the console's live unit
+        panel and for interactive_play.py's own bookkeeping."""
+        return frozenset(self._player_controlled_tags)
+
+    @property
+    def banned_actions(self) -> frozenset[str]:
+        """Action names the autonomous policy is currently forbidden from
+        choosing -- see ban_action()/apply_bans(). Never applied to a
+        player's own explicit command."""
+        return frozenset(self._banned_actions)
+
+    def assign_to_player_control(
+        self, target_sector: int, count: int | None = None, tags: Collection[int] | None = None,
+    ) -> list:
+        """Reserve marines for direct player control -- excluded from the
+        autonomous policy's own group-move from now on, exactly like the
+        garrison, until released. Give either `count` (picks that many
+        marines nearest home, excluding the garrison and anyone already
+        player-controlled -- the common case: a natural-language dispatch
+        rarely names specific tags) or an explicit `tags` set; `count=None`
+        with no `tags` means "every marine currently available." Returns the
+        raw attack-move calls to actually send the newly-assigned marines to
+        `target_sector` -- merge these into the next step() call via its
+        `extra_calls` parameter; assignment alone is just bookkeeping and
+        sends nothing on its own."""
+        if tags is None:
+            cc = self._state.command_center_pos
+            available = [
+                m for m in self._state.marines
+                if m.tag not in self._garrison_tags and m.tag not in self._player_controlled_tags
+            ]
+            if cc is not None:
+                available.sort(key=lambda m: (m.x - cc[0]) ** 2 + (m.y - cc[1]) ** 2)
+            n = len(available) if count is None else min(count, len(available))
+            resolved = {m.tag for m in available[:n]}
+        else:
+            resolved = set(tags) & {m.tag for m in self._state.marines}
+        self._player_controlled_tags |= resolved
+        self._last_dispatch_tags = resolved
+        if not resolved:
+            return []
+        return self._translator.move_specific(self._state, resolved, target_sector, self._orientation)
+
+    def release_from_player_control(
+        self, tags: Collection[int] | None = None, sector: int | None = None, most_recent: bool = False,
+    ) -> frozenset[int]:
+        """Return player-controlled marines to autonomous control -- pure
+        bookkeeping, no raw calls needed, since a released marine simply
+        stops being excluded and rejoins the pool for the AI's next
+        group-move. Exactly one of `tags` (explicit), `sector` (release
+        whoever is currently player-controlled AND in that sector -- "release
+        the marines at sector 12"), or `most_recent` (release the tags from
+        the last assign_to_player_control call -- "release the marine I just
+        sent") should be given; none of them means release everyone. Returns
+        the tags actually released."""
+        if tags is not None:
+            released = set(tags) & self._player_controlled_tags
+        elif sector is not None:
+            released = {
+                m.tag for m in self._state.marines
+                if m.tag in self._player_controlled_tags and self._sector_of(m.x, m.y) == sector
+            }
+        elif most_recent:
+            released = set(self._last_dispatch_tags) & self._player_controlled_tags
+        else:
+            released = set(self._player_controlled_tags)
+        self._player_controlled_tags -= released
+        return frozenset(released)
+
+    def ban_action(self, name: str) -> None:
+        """Standing directive: the autonomous policy may never choose `name`
+        again this episode (see apply_bans()). `no_op` can't be banned --
+        it's the mask's required fallback, and banning it could leave a step
+        with no legal action at all."""
+        if name != "no_op":
+            self._banned_actions.add(name)
+
+    def allow_action(self, name: str) -> None:
+        """Lift a standing ban -- see ban_action()."""
+        self._banned_actions.discard(name)
+
+    def apply_bans(self, mask: np.ndarray) -> np.ndarray:
+        """A copy of `mask` with every currently-banned action forced
+        illegal. Applied by the caller (interactive_play.py) only to the
+        autonomous policy's own action selection -- directives never
+        restrict a player's own explicit command, and this is never called
+        during training or plain play.py, so neither is affected."""
+        if not self._banned_actions:
+            return mask
+        result = mask.copy()
+        for name in self._banned_actions:
+            result[self.action_spec.index_for_name(name)] = False
+        return result
+
+    def _prune_player_controlled_tags(self) -> None:
+        alive = {m.tag for m in self._state.marines}
+        self._player_controlled_tags &= alive
 
     def _update_mobilized(self) -> None:
         count = len(self._state.marines)
@@ -206,6 +318,9 @@ class SC2FightEnv(gym.Env):
         self._mobilized = False
         self._update_mobilized()
         self._garrison_tags = set()
+        self._player_controlled_tags = set()
+        self._last_dispatch_tags = set()
+        self._banned_actions = set()
         self._orientation = self._compute_orientation(self._state)
         self._pathing = self._raw_pathing = self._read_pathing(timesteps[0])
         if self._pathing is not None and self._state.command_center_pos is not None:
@@ -431,7 +546,12 @@ class SC2FightEnv(gym.Env):
             )
         return SpawnOrientation.from_home_position(self.config.map_size, *home, bounds=self.grid.bounds)
 
-    def step(self, action: int):
+    def step(self, action: int, extra_calls: list | None = None):
+        """`extra_calls` rides alongside whatever `action` executes this
+        turn, merged into the same underlying step -- how a unit-dispatch
+        order (see assign_to_player_control) actually reaches the game,
+        typically alongside action=NO_OP since a dispatch doesn't ask the
+        autonomous army to do anything this turn."""
         if self._state is None:
             raise RuntimeError("step() called before reset()")
 
@@ -439,9 +559,11 @@ class SC2FightEnv(gym.Env):
         if not legal[action]:
             action = int(FixedAction.NO_OP)
 
+        self._prune_player_controlled_tags()
         garrison_calls = self._update_garrison()
-        calls = self._translator.translate(action, self._state, self._orientation, frozenset(self._garrison_tags))
-        timesteps = self._sc2_env.step([calls + garrison_calls])
+        reserved_tags = frozenset(self._garrison_tags | self._player_controlled_tags)
+        calls = self._translator.translate(action, self._state, self._orientation, reserved_tags)
+        timesteps = self._sc2_env.step([calls + garrison_calls + (extra_calls or [])])
         ts = timesteps[0]
 
         self._state = GameState.from_observation(ts)
