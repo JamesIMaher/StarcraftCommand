@@ -674,12 +674,19 @@ Open the printed `http://127.0.0.1:8765` (`--command-port` to change it).
 Under the hood, a command is turned into one action via a single **forced
 Claude tool call** (`command/interpreter.py`): the tool's schema restricts
 the choice to an `enum` of whatever `env.action_masks()` says is currently
-legal, plus a `cannot_comply` escape hatch, so Claude is structurally unable
-to return an illegal or nonexistent action -- it either picks a real one or
-explains why it can't. This reuses `action_space.py`'s existing
-`name()`/`index_for_name()` exactly as its docstring always said a future
-"human- or LLM-driven command layer" would: no changes to the action space,
-the environment, or the trained model were needed for this feature.
+legal, plus a `cannot_comply` escape hatch. That schema is a strong hint,
+not a hard guarantee -- confirmed live, a fast model can still occasionally
+name something outside this turn's actual enum (e.g. `build_barracks` when
+no supply depot exists yet) -- so `interpret_command()` never trusts the
+model's own explanation for that case: an illegal choice always gets
+`env.step()` blocked (never executes) *and* has its message replaced with a
+ground-truth reason computed straight from `GameState`
+(`interpreter.py`'s `_explain_unavailable()`), never the model's original
+text, which was written assuming the choice would be honored and would
+otherwise read as a false confirmation. This reuses `action_space.py`'s
+existing `name()`/`index_for_name()` exactly as its docstring always said a
+future "human- or LLM-driven command layer" would: no changes to the action
+space, the environment, or the trained model were needed for this feature.
 
 The game does not advance while a command is being interpreted, because
 nothing calls `env.step()` until the Claude round-trip resolves -- the
