@@ -379,6 +379,12 @@ src/sc2rl/
     action_translation.py   action index/name -> raw PySC2 FunctionCalls
   training/train.py         MaskablePPO training entrypoint (supports --resume-from)
   inference/play.py         run a trained checkpoint against a live game
+  inference/interactive_play.py  same, plus a local web command console (see below)
+  command/
+    state_summary.py        GameState -> short human/LLM-readable description
+    interpreter.py           one command + legal actions -> one Claude tool call -> one action
+    server.py                 Flask app: the command console's backend
+    templates/command.html   the command console's page (text box + mic button)
   config.py                 YAML -> typed config
 tests/                     pytest suite, entirely against fakes/stubs (see tests/fakes/fake_pysc2.py)
 ```
@@ -630,6 +636,50 @@ run rather than `--resume-from`.
 ```powershell
 python -m sc2rl.inference.play --checkpoint checkpoints/final_model --episodes 5 --visualize
 ```
+
+### Live command console (Generative-AI layer)
+
+`interactive_play.py` runs the same trained policy but adds a local web page
+where you can type -- or speak, via the browser's built-in speech
+recognition (Chrome/Edge) -- an instruction like "return the marines to
+base" or "build a supply depot." It interrupts autonomous play for exactly
+one action, then hands control straight back to the model:
+
+```powershell
+$env:ANTHROPIC_API_KEY = "..."
+python -m sc2rl.inference.interactive_play --checkpoint checkpoints/final_model --visualize
+```
+
+Open the printed `http://127.0.0.1:8765` (`--command-port` to change it).
+Under the hood, a command is turned into one action via a single **forced
+Claude tool call** (`command/interpreter.py`): the tool's schema restricts
+the choice to an `enum` of whatever `env.action_masks()` says is currently
+legal, plus a `cannot_comply` escape hatch, so Claude is structurally unable
+to return an illegal or nonexistent action -- it either picks a real one or
+explains why it can't. This reuses `action_space.py`'s existing
+`name()`/`index_for_name()` exactly as its docstring always said a future
+"human- or LLM-driven command layer" would: no changes to the action space,
+the environment, or the trained model were needed for this feature.
+
+The game does not advance while a command is being interpreted, because
+nothing calls `env.step()` until the Claude round-trip resolves -- the
+bot-mode client simply waits for the next step request, so a command always
+executes against the state the player actually saw. A declined command
+doesn't consume a game step either; the loop just falls through to
+`model.predict()` on the next iteration as if nothing happened.
+
+Model interpreting commands defaults to `claude-haiku-4-5-20251001`
+(`command/interpreter.py`'s `DEFAULT_MODEL`) -- cheap and fast, plenty for
+picking one item off a short menu. `state_summary.py` builds the natural-
+language state description Claude sees (minerals, army size, mobilized/
+garrison status, which sectors hold known enemies) -- deliberately separate
+from `observation.py`'s `featurize()`, whose normalized float vector means
+nothing to an LLM.
+
+**v1 scope, by design:** one action per command (matches "return to base"
+being a single `move_army_to_sector_N`); no live game-state panel in the
+page yet, just a running command log. Both are natural follow-ups once this
+is proven out.
 
 ## Key defaults (see `configs/default.yaml`)
 

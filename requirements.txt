@@ -18,3 +18,6 @@ gymnasium
 numpy
 pyyaml
 pytest
+# Generative-AI command layer (src/sc2rl/command/, inference/interactive_play.py).
+anthropic
+flask

@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>SC2 Command Console</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+  #row { display: flex; gap: 0.5rem; }
+  #text { flex: 1; font-size: 1rem; padding: 0.4rem; }
+  button { font-size: 1rem; padding: 0.4rem 0.8rem; cursor: pointer; }
+  #mic.listening { background: #d33; color: white; }
+  #log { list-style: none; padding: 0; margin-top: 1rem; }
+  #log li { padding: 0.4rem 0.6rem; border-bottom: 1px solid #eee; }
+  #log li.you { color: #555; }
+  #log li.ok { color: #146c2e; }
+  #log li.decline { color: #8a6d00; }
+  #log li.error { color: #a30000; }
+</style>
+</head>
+<body>
+  <h1>Command Console</h1>
+  <p>Tell the army what to do -- one instruction at a time. It interrupts autonomous
+  play for a single action, then control goes straight back to the trained model.</p>
+  <div id="row">
+    <input id="text" type="text" placeholder="e.g. return the marines to base" autofocus>
+    <button id="send">Send</button>
+    <button id="mic">Mic</button>
+  </div>
+  <ul id="log"></ul>
+  <script>
+    const textEl = document.getElementById('text');
+    const logEl = document.getElementById('log');
+
+    function log(message, cls) {
+      const li = document.createElement('li');
+      li.textContent = message;
+      if (cls) li.className = cls;
+      logEl.prepend(li);
+    }
+
+    async function send() {
+      const text = textEl.value.trim();
+      if (!text) return;
+      textEl.value = '';
+      log('You: ' + text, 'you');
+      let data;
+      try {
+        const res = await fetch('/command', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        });
+        data = await res.json();
+        if (!res.ok) {
+          log('Error: ' + (data.error || res.statusText), 'error');
+          return;
+        }
+      } catch (err) {
+        log('Request failed: ' + err, 'error');
+        return;
+      }
+      if (data.action_index === null) {
+        log('Declined: ' + data.message, 'decline');
+      } else {
+        log('Did ' + data.action_name + ': ' + data.message, 'ok');
+      }
+    }
+
+    document.getElementById('send').addEventListener('click', send);
+    textEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const micButton = document.getElementById('mic');
+    if (SpeechRecognition) {
+      const recognizer = new SpeechRecognition();
+      recognizer.lang = 'en-US';
+      recognizer.interimResults = false;
+      recognizer.onstart = () => micButton.classList.add('listening');
+      recognizer.onend = () => micButton.classList.remove('listening');
+      recognizer.onresult = (event) => {
+        textEl.value = event.results[0][0].transcript;
+        send();
+      };
+      recognizer.onerror = (event) => log('Speech recognition error: ' + event.error, 'error');
+      micButton.addEventListener('click', () => recognizer.start());
+    } else {
+      micButton.disabled = true;
+      micButton.title = 'Speech recognition not supported in this browser (use Chrome or Edge)';
+    }
+  </script>
+</body>
+</html>
