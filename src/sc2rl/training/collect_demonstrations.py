@@ -51,7 +51,7 @@ def collect(
                 mask = env.action_masks()
                 action = policy.action(
                     env.state, env.action_spec, env.masking_config, env.orientation,
-                    env.unreachable_sectors, env.mobilized,
+                    env.unreachable_sectors, env.mobilized, env.config.garrison_size,
                 )
                 if not mask[action]:
                     action = int(FixedAction.NO_OP)

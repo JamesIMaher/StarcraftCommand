@@ -539,8 +539,13 @@ replay actions (mouse/camera/hotkeys) because its action space *was* that
 full interface. Ours is a simplified custom abstraction with no direct
 mapping from human replay data, so the practical equivalent is a **scripted
 teacher** (`env/scripted_policy.py`) operating in our own action space:
-build a small base, keep training marines, defend home if any sector with
-one of our buildings is under attack and undefended, and -- once mobilized
+build a small base, keep training marines, recall the whole offensive
+force home only if a sector with one of our buildings is under a threat
+bigger than the standing garrison can handle on its own (`garrison_size`,
+passed in by the caller -- a single stray unit near home no longer
+interrupts the search, which previously made the army destroy a few
+enemies elsewhere and then abandon a real, more distant target every time
+it happened), and -- once mobilized
 to a real attack force (`ScriptedPolicyConfig.attack_threshold`, default 20
 marines, matching `masking.min_marines_to_advance`) -- commit to a
 **search-and-destroy** pattern. Below the threshold it holds at the base.

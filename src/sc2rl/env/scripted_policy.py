@@ -74,6 +74,7 @@ class ScriptedPolicy:
         orientation: SpawnOrientation,
         unreachable_sectors: Collection[int] = (),
         mobilized: bool = False,
+        garrison_size: int = 0,
     ) -> int:
         home = home_sector(state.command_center_pos, spec.grid, orientation)
         mask = compute_action_masks(
@@ -99,7 +100,20 @@ class ScriptedPolicy:
         # several, and a counterattack on the barracks next door has to
         # register as an attack on home.
         base_sectors = sectors_of(state.structures, spec.grid, orientation) or {home}
-        if mask[home_action] and enemy_sectors & base_sectors:
+        enemies_at_base = sum(
+            1 for u in state.enemies
+            if spec.grid.sector_of(*orientation.to_canonical(u.x, u.y)) in base_sectors
+        )
+        # The garrison (env.garrison_size marines permanently held at the
+        # base -- see SC2FightEnv._update_garrison) can fend off a routine
+        # small raid on its own. Recalling the WHOLE offensive force for any
+        # enemy sighted near home, even a single stray unit the garrison
+        # could handle alone, made the army destroy a few enemies elsewhere
+        # and then abandon the search every single time -- confirmed live.
+        # garrison_size defaults to 0, so a caller that doesn't know about
+        # the garrison gets the original "any enemy at home recalls
+        # everyone" behavior unchanged.
+        if mask[home_action] and enemies_at_base > garrison_size:
             self._clear_search_target()  # break off any in-progress search to defend
             return home_action
 

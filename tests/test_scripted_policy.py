@@ -173,6 +173,42 @@ def test_breaks_off_search_to_defend_home_under_threat():
     assert action == spec.move_action_for_sector(0)
 
 
+def test_does_not_recall_the_offensive_when_the_garrison_can_handle_the_threat():
+    # Regression test: recalling the whole offensive force for any enemy
+    # near home -- even a single unit the garrison could fend off alone --
+    # made the army abandon a real, more distant, already-known target for
+    # a trivial home sighting every time. With garrison_size=4 and only 1
+    # enemy at home, "destroy takes priority" should still pick the
+    # farther, more substantial target over the home nuisance.
+    spec = make_spec()
+    masking = MaskingConfig(min_marines_to_move=4, min_marines_to_advance=20)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.command_centers.append(fake.command_center(1, x=1, y=1))
+    for tag in range(20):
+        state.marines.append(fake.marine(tag, x=50, y=50, idle=True))  # main force out in the field
+    state.enemies.append(fake.enemy_unit(99, fake.UNIT_MARINE, x=2, y=2))  # one stray unit at home
+    state.enemies.append(fake.enemy_unit(100, fake.UNIT_HATCHERY, x=58, y=58))  # the real target, far away
+    policy = ScriptedPolicy(ScriptedPolicyConfig(target_supply_depots=0, target_barracks=0, attack_threshold=20))
+    action = policy.action(state, spec, masking, identity_orientation(spec), mobilized=True, garrison_size=4)
+    assert action == spec.move_action_for_sector(spec.grid.num_sectors - 1)  # kept pressing the far target
+
+
+def test_recalls_the_offensive_when_the_threat_exceeds_the_garrison():
+    # A real attack (more enemies than the garrison can handle) still pulls
+    # the offensive force home.
+    spec = make_spec()
+    masking = MaskingConfig(min_marines_to_move=4, min_marines_to_advance=20)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    state.command_centers.append(fake.command_center(1, x=1, y=1))
+    for tag in range(20):
+        state.marines.append(fake.marine(tag, x=1, y=1))
+    for i in range(5):  # 5 enemies, more than garrison_size=4
+        state.enemies.append(fake.enemy_unit(90 + i, fake.UNIT_MARINE, x=2, y=2))
+    policy = ScriptedPolicy(ScriptedPolicyConfig(target_supply_depots=0, target_barracks=0, attack_threshold=20))
+    action = policy.action(state, spec, masking, identity_orientation(spec), mobilized=True, garrison_size=4)
+    assert action == spec.move_action_for_sector(0)
+
+
 def test_defends_the_base_when_the_attack_is_on_a_building_outside_the_command_centers_sector():
     # "Home" follows the actual buildings, not a hard-coded sector 0: with
     # ~7-unit cells the base straddles several sectors, and an enemy at the
