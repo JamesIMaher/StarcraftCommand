@@ -154,6 +154,39 @@ def sectors_of(units: Iterable[_HasPosition], grid: SectorGrid, orientation: Spa
     return {grid.sector_of(*orientation.to_canonical(u.x, u.y)) for u in units}
 
 
+def real_corner_sectors(grid: SectorGrid, orientation: SpawnOrientation) -> dict[str, int]:
+    """Which CANONICAL sector number sits at each of the map's actual screen
+    corners this episode. Every sector number the rest of the system uses
+    (action names, a dispatch's target_sector, sectors_of()) is in home-
+    relative canonical space, which is mirrored per-episode so "sector 0" is
+    always near home regardless of which real corner the player spawned in.
+    That's exactly right for the trained policy, but wrong for a human (or
+    an LLM on the human's behalf) naming a screen direction like "the bottom
+    right corner of the map" -- they mean an absolute, un-mirrored screen
+    corner, and naively assuming canonical row/col numbering lines up with
+    the screen is silently backwards whenever this episode's spawn corner
+    mirrors one or both axes (confirmed live: "bottom left" was needed to
+    reach the screen's actual top right). Look up the corner by name instead
+    of computing it, so the caller never has to reason about mirroring.
+
+    Each raw corner sector's own CENTER point (not exactly (min_x, min_y)
+    etc., to stay off the boundary) is round-tripped through
+    `orientation.to_canonical` -- the same transform every other sector
+    number in the system is already expressed in -- so the result composes
+    directly with, e.g., a dispatch's `target_sector`.
+    """
+    raw_corners = {
+        "top-left": 0,
+        "top-right": grid.cols - 1,
+        "bottom-left": grid.num_sectors - grid.cols,
+        "bottom-right": grid.num_sectors - 1,
+    }
+    return {
+        name: grid.sector_of(*orientation.to_canonical(*grid.sector_center(raw_sector)))
+        for name, raw_sector in raw_corners.items()
+    }
+
+
 def home_sector(
     command_center_pos: tuple[float, float] | None, grid: SectorGrid, orientation: SpawnOrientation
 ) -> int:

@@ -767,6 +767,29 @@ law that a marine can't move alone. Asking to move fewer marines than the
 model's own threshold (e.g. "move these 2 marines" with only 4 at home)
 just works.
 
+**Sector numbering is home-relative, not screen-relative -- and that broke
+"send a marine to the bottom right corner."** Every sector number the rest
+of the system uses (action names, a dispatch's `target_sector`) is in
+*canonical* space (`sector_grid.py`'s `SpawnOrientation`): mirrored per
+episode so sector 0 is always near home, regardless of which real map
+corner the player actually spawned in -- necessary for the trained policy
+to learn a stable meaning for "toward the enemy," since Simple64 randomizes
+spawn corners. Confirmed live, this silently broke directional player
+commands: with both axes mirrored (home spawned toward the map's real
+bottom-right), asking for "the bottom right corner" resolved to the
+*diagonally opposite* real corner, and the marine only landed where
+intended by asking for "bottom left" instead. The state description Claude
+sees now includes a **real corner legend** (`sector_grid.py`'s
+`real_corner_sectors()`, e.g. `top-left=15, top-right=12, ...`) computed by
+round-tripping each actual screen corner's center point through the same
+`orientation.to_canonical()` transform every other sector number already
+goes through -- so Claude looks the right sector number up by name instead
+of re-deriving it (and getting the mirroring backwards) from the row/col
+index math itself. The interpreter's system prompt tells Claude explicitly
+to prefer this legend whenever the player names an actual screen corner or
+edge, and to fall back to the row/col math only for home-relative phrasing
+like "toward the enemy."
+
 Release a unit back to AI control three ways, none of which need Claude to
 disambiguate which marine you mean from a loose description: the page's
 per-unit **Release** button or its **Release all** button (`POST

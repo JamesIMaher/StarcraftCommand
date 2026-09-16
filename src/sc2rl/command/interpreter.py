@@ -95,7 +95,12 @@ Infer unit_count from the wording: "a marine"/"one marine" -> "1", "a few"/"some
 -> "3", "all"/"every marine"/"the whole army" -> "all". These units are EXCLUDED \
 from the autonomous policy's own moves until released -- they hold position (and \
 fight anything that comes into range) once they arrive, so one dispatch order is \
-enough; you don't need to keep re-issuing it.
+enough; you don't need to keep re-issuing it. Sector numbers are home-relative, NOT \
+laid out like the screen -- when the player names an actual screen corner or edge \
+("the bottom right corner of the map", "the top edge"), you MUST read the sector \
+number off the state description's corner legend rather than computing it from the \
+row/col index math; only use the row/col math for relative phrasing like "toward \
+the enemy" or "near home".
 
 - release_units: return player-controlled marines to autonomous AI control (e.g. \
 "return all units to AI control", "let the AI handle everything again", "release \

@@ -9,7 +9,7 @@ worth mentioning.
 from __future__ import annotations
 
 from ..env.game_state import GameState
-from ..env.sector_grid import SectorGrid, SpawnOrientation, home_sector, sectors_of
+from ..env.sector_grid import SectorGrid, SpawnOrientation, home_sector, real_corner_sectors, sectors_of
 
 
 def describe_state_for_llm(
@@ -22,10 +22,15 @@ def describe_state_for_llm(
     banned_actions: tuple[str, ...] = (),
 ) -> str:
     home = home_sector(state.command_center_pos, grid, orientation)
+    corners = real_corner_sectors(grid, orientation)
+    corner_legend = ", ".join(f"{name}={idx}" for name, idx in corners.items())
     lines = [
         f"Sectors are numbered 0..{grid.num_sectors - 1} in row-major order over a "
         f"{grid.rows}x{grid.cols} grid (index = row * {grid.cols} + column); sector {home} "
         "is the HOME base.",
+        f"This numbering is home-relative, NOT laid out like the screen -- when the player names an "
+        f"actual screen corner or edge, use this legend rather than guessing from the index math: "
+        f"{corner_legend}.",
         f"Minerals: {state.minerals}. Supply: {state.food_used}/{state.food_cap}.",
         f"Marines: {len(state.marines)} total"
         + (f", including {garrison_size} permanently held at home as a garrison" if garrison_size else "")

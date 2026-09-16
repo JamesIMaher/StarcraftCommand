@@ -1,6 +1,6 @@
 import pytest
 
-from sc2rl.env.sector_grid import SectorGrid, SpawnOrientation, home_sector
+from sc2rl.env.sector_grid import SectorGrid, SpawnOrientation, home_sector, real_corner_sectors
 
 
 def make_grid():
@@ -134,6 +134,40 @@ def test_spawn_orientation_mirrors_only_the_axis_that_needs_it():
     assert orientation.mirror_x is True
     assert orientation.mirror_y is False
     assert orientation.to_canonical(10, 10) == (54, 10)
+
+
+def test_real_corner_sectors_identity_matches_the_raw_grid_layout():
+    grid = make_grid()
+    identity = SpawnOrientation(map_size=64, mirror_x=False, mirror_y=False)
+    assert real_corner_sectors(grid, identity) == {
+        "top-left": 0, "top-right": 3, "bottom-left": 12, "bottom-right": 15,
+    }
+
+
+def test_real_corner_sectors_flip_diagonally_when_home_is_in_the_opposite_corner():
+    # Regression test: reported live as "had to say bottom left to get the
+    # marine to the screen's actual top right" -- home spawning in the real
+    # bottom-right corner mirrors both axes, so the *canonical* sector
+    # number for the real top-right corner is the same one that identity
+    # orientation would call bottom-left, and vice versa.
+    grid = make_grid()
+    mirrored = SpawnOrientation.from_home_position(map_size=64, home_x=50, home_y=50)
+    assert mirrored.mirror_x and mirrored.mirror_y
+    corners = real_corner_sectors(grid, mirrored)
+    assert corners["top-right"] == 12  # what identity orientation calls bottom-left
+    assert corners["bottom-left"] == 3  # what identity orientation calls top-right
+    assert corners["top-left"] == 15
+    assert corners["bottom-right"] == 0
+
+
+def test_real_corner_sectors_only_flips_the_mirrored_axis():
+    grid = make_grid()
+    orientation = SpawnOrientation.from_home_position(map_size=64, home_x=50, home_y=10)  # mirror_x only
+    corners = real_corner_sectors(grid, orientation)
+    assert corners["top-left"] == 3  # x flipped, y unchanged
+    assert corners["top-right"] == 0
+    assert corners["bottom-left"] == 15
+    assert corners["bottom-right"] == 12
 
 
 def test_spawn_orientation_to_world_is_its_own_inverse():

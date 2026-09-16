@@ -86,3 +86,26 @@ def test_describe_state_omits_directive_line_when_no_bans():
     state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
     text = describe_state_for_llm(state, grid, identity_orientation(grid))
     assert "BAN" not in text
+
+
+def test_describe_state_includes_the_real_corner_legend():
+    grid = make_grid()
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    text = describe_state_for_llm(state, grid, identity_orientation(grid))
+    assert "top-left=0" in text
+    assert "top-right=3" in text
+    assert "bottom-left=12" in text
+    assert "bottom-right=15" in text
+
+
+def test_describe_state_corner_legend_reflects_this_episodes_mirroring():
+    # Regression test for the live-reported bug: without this, an LLM told
+    # only "sectors are numbered row-major, sector N is home" has no way to
+    # know that canonical row/col numbering doesn't match the screen once
+    # the spawn corner mirrors an axis -- it silently guessed backwards.
+    grid = make_grid()
+    mirrored = SpawnOrientation.from_home_position(map_size=64, home_x=50, home_y=50)
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    text = describe_state_for_llm(state, grid, mirrored)
+    assert "top-right=12" in text
+    assert "bottom-left=3" in text
