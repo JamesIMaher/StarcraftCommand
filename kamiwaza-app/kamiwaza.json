@@ -1,0 +1,15 @@
+{
+  "name": "sc2-command",
+  "version": "0.1.0",
+  "description": "Voice/text command console for the StarcraftCommand SC2 agent. The game runs on the player's PC and connects out to this app; gpt-oss-120b interprets commands.",
+  "type": "app",
+  "source_type": "user_repo",
+  "visibility": "private",
+  "risk_tier": 1,
+  "verified": false,
+  "kz_ext_version": ">=0.2.0,<1.0.0",
+  "health_check_path": "/health",
+  "env_defaults": {
+    "MODEL_NAME": "gpt-oss-120b"
+  }
+}

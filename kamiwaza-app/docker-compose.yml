@@ -1,0 +1,13 @@
+# Local dev only. The platform strips host port bindings at deploy time.
+# Locally: KAMIWAZA_USE_AUTH=false KAMIWAZA_BASE_URL=<an OpenAI-compatible /v1> docker compose up
+services:
+  app:
+    build: .
+    ports:
+      - "8890:8000"
+    environment:
+      - KAMIWAZA_API_URL=${KAMIWAZA_API_URL:-}
+      - KAMIWAZA_PUBLIC_API_URL=${KAMIWAZA_PUBLIC_API_URL:-}
+      - KAMIWAZA_BASE_URL=${KAMIWAZA_BASE_URL:-}
+      - MODEL_NAME=${MODEL_NAME:-gpt-oss-120b}
+      - KAMIWAZA_USE_AUTH=${KAMIWAZA_USE_AUTH:-false}

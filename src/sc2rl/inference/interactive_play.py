@@ -17,6 +17,18 @@ Usage:
 
 Requires ANTHROPIC_API_KEY, either already in the environment or in a local
 .env file (see .env.example) -- load_dotenv() below picks up the latter.
+
+With --kamiwaza-url, the console is instead the SC2 Command Console app on a
+Kamiwaza instance (kamiwaza-app/ in this repo), and commands are interpreted
+by the platform's own LLM (gpt-oss-120b) through that app's /v1 proxy -- no
+Anthropic key needed:
+
+    python -m sc2rl.inference.interactive_play --checkpoint checkpoints/final_model \
+        --kamiwaza-url https://<kamiwaza-host>/runtime/apps/<app-name>
+
+Requires KAMIWAZA_API_KEY (a Kamiwaza personal access token) in the
+environment or .env. Set KAMIWAZA_VERIFY_SSL=false for an instance with a
+self-signed certificate.
 """
 
 from __future__ import annotations
@@ -26,6 +38,8 @@ import os
 import queue
 
 import anthropic
+import httpx
+import openai
 from dotenv import load_dotenv
 from sb3_contrib import MaskablePPO
 
@@ -33,11 +47,13 @@ from ..command.interpreter import (
     ActionResult,
     DeclineResult,
     DEFAULT_MODEL,
+    DEFAULT_OPENAI_MODEL,
     DirectiveResult,
     DispatchResult,
     ReleaseResult,
     interpret_command,
 )
+from ..command.relay_client import RelayClient
 from ..command.server import EventLog, PendingCommand, PendingRelease, run_server
 from ..config import Config
 from ..env.action_space import FixedAction
@@ -61,6 +77,22 @@ _CLAUDE_TIMEOUT_SECONDS = 12.0
 
 def _build_client() -> anthropic.Anthropic:
     return anthropic.Anthropic(timeout=_CLAUDE_TIMEOUT_SECONDS, max_retries=0)
+
+
+def _build_openai_client(base_url: str, api_key: str, verify: bool = True) -> openai.OpenAI:
+    """Same fail-fast timeout/no-retry policy as _build_client, for an
+    OpenAI-compatible endpoint (the Kamiwaza console app's /v1 proxy)."""
+    return openai.OpenAI(
+        base_url=base_url, api_key=api_key, timeout=_CLAUDE_TIMEOUT_SECONDS, max_retries=0,
+        http_client=httpx.Client(verify=verify),
+    )
+
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    value = os.environ.get(name)
+    if value is None or value == "":
+        return default
+    return value.strip().lower() not in ("0", "false", "no", "off")
 
 
 def _apply_command_result(env: SC2FightEnv, result, pending: PendingCommand, events: EventLog):
@@ -132,10 +164,14 @@ def _autonomous_action(env: SC2FightEnv, model, obs, action_masks, deterministic
 def play(
     config: Config, checkpoint: str, episodes: int, port: int,
     deterministic: bool = True, command_model: str = DEFAULT_MODEL,
+    kamiwaza_url: str | None = None, kamiwaza_token: str | None = None, verify_ssl: bool = True,
 ) -> None:
     env = SC2FightEnv(config.env)
     model = MaskablePPO.load(checkpoint)
-    client = _build_client()  # reads ANTHROPIC_API_KEY from the environment
+    if kamiwaza_url:
+        client = _build_openai_client(f"{kamiwaza_url.rstrip('/')}/v1", kamiwaza_token, verify=verify_ssl)
+    else:
+        client = _build_client()  # reads ANTHROPIC_API_KEY from the environment
 
     command_queue: "queue.Queue[PendingCommand]" = queue.Queue()
     control_queue: "queue.Queue[PendingRelease]" = queue.Queue()
@@ -147,8 +183,15 @@ def play(
             "banned_actions": sorted(env.banned_actions),
         }
 
-    run_server(command_queue, control_queue, events, state_snapshot, port)
-    print(f"Command console: http://127.0.0.1:{port}")
+    if kamiwaza_url:
+        RelayClient(
+            kamiwaza_url, kamiwaza_token, command_queue, control_queue, events, state_snapshot,
+            verify=verify_ssl,
+        ).start()
+        print(f"Command console: {kamiwaza_url.rstrip('/')}/")
+    else:
+        run_server(command_queue, control_queue, events, state_snapshot, port)
+        print(f"Command console: http://127.0.0.1:{port}")
 
     wins = 0
     for episode in range(episodes):
@@ -225,17 +268,31 @@ def main() -> None:
     parser.add_argument("--stochastic", action="store_true", help="Sample actions instead of taking the argmax")
     parser.add_argument("--command-port", type=int, default=DEFAULT_PORT, help="Local port for the command console")
     parser.add_argument(
-        "--command-model", default=DEFAULT_MODEL,
-        help="Claude model that interprets console commands (default: %(default)s)",
+        "--command-model", default=None,
+        help=f"Model that interprets console commands (default: {DEFAULT_MODEL}, or "
+             f"{DEFAULT_OPENAI_MODEL} with --kamiwaza-url -- where the app pins its own model anyway)",
+    )
+    parser.add_argument(
+        "--kamiwaza-url", default=None,
+        help="Use the SC2 Command Console app on Kamiwaza instead of the local console, e.g. "
+             "https://<kamiwaza-host>/runtime/apps/<app-name>. Needs KAMIWAZA_API_KEY.",
     )
     args = parser.parse_args()
 
     load_dotenv()  # picks up a local .env if present; no-op (and harmless) if it isn't
-    if not os.environ.get("ANTHROPIC_API_KEY"):
+    kamiwaza_token = os.environ.get("KAMIWAZA_API_KEY")
+    if args.kamiwaza_url:
+        if not kamiwaza_token:
+            raise SystemExit(
+                "KAMIWAZA_API_KEY is not set -- --kamiwaza-url needs a Kamiwaza personal access token. "
+                "Put it in a .env file (see .env.example) or set it in your shell."
+            )
+    elif not os.environ.get("ANTHROPIC_API_KEY"):
         raise SystemExit(
             "ANTHROPIC_API_KEY is not set -- the command console needs it to reach Claude. "
             "Put it in a .env file (see .env.example) or set it in your shell."
         )
+    command_model = args.command_model or (DEFAULT_OPENAI_MODEL if args.kamiwaza_url else DEFAULT_MODEL)
 
     config = Config.from_yaml(args.config)
     if args.visualize:
@@ -244,7 +301,9 @@ def main() -> None:
 
     play(
         config, args.checkpoint, args.episodes, args.command_port,
-        deterministic=not args.stochastic, command_model=args.command_model,
+        deterministic=not args.stochastic, command_model=command_model,
+        kamiwaza_url=args.kamiwaza_url, kamiwaza_token=kamiwaza_token,
+        verify_ssl=_env_flag("KAMIWAZA_VERIFY_SSL", default=True),
     )
 
 

@@ -42,6 +42,7 @@ running StarCraft II client (see "Status" below).
 | [docs/TRAINING.md](docs/TRAINING.md) | Running training, checkpoints/resuming, the behavior-cloning warm start |
 | [docs/COMMAND_CONSOLE.md](docs/COMMAND_CONSOLE.md) | The natural-language web console: standing directives, per-unit player control, all five Claude tools |
 | [docs/CONFIG_REFERENCE.md](docs/CONFIG_REFERENCE.md) | Every `env:` config knob, defaults, and the per-episode reward breakdown |
+| [docs/KAMIWAZA.md](docs/KAMIWAZA.md) | Hosting the command console on Kamiwaza, with gpt-oss-120b interpreting commands |
 
 ## Repository layout
 
@@ -63,10 +64,12 @@ src/sc2rl/
   inference/interactive_play.py  same, plus a local web command console (see docs/COMMAND_CONSOLE.md)
   command/
     state_summary.py        GameState -> short human/LLM-readable description
-    interpreter.py           one command + legal actions -> one Claude tool call -> one action
+    interpreter.py           one command + legal actions -> one forced tool call (Claude or OpenAI-compatible) -> one action
     server.py                 Flask app: the command console's backend
+    relay_client.py           connects the game loop to the Kamiwaza-hosted console instead
     templates/command.html   the command console's page (text box + mic button)
   config.py                 YAML -> typed config
+kamiwaza-app/              the command console as a Kamiwaza App Garden app (see docs/KAMIWAZA.md)
 tests/                     pytest suite, entirely against fakes/stubs (see tests/fakes/fake_pysc2.py)
 ```
 

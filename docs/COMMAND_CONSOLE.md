@@ -276,3 +276,9 @@ one dispatch, one release, or one directive change -- never a multi-step or
 conditional plan (e.g. "stop building depots once I have 3 barracks" is out
 of scope; directives are a flat ban/allow on an action name for the rest of
 the episode).
+
+## Hosting the console on Kamiwaza
+
+The same console can run as a Kamiwaza App Garden app, with the platform's
+gpt-oss-120b interpreting commands instead of Claude. Pass `--kamiwaza-url`
+to `interactive_play`. See [KAMIWAZA.md](KAMIWAZA.md).

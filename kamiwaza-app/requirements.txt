@@ -1,0 +1,4 @@
+fastapi
+uvicorn[standard]
+httpx
+kamiwaza-extensions-lib>=0.4.5,<0.5

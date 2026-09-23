@@ -1,11 +1,16 @@
 """Turns one natural-language player command into a structured intent, via a
-single forced Claude tool call chosen from several ("tool_choice": "any").
-The `client` (an anthropic.Anthropic instance, or anything with the same
-`.messages.create(**kwargs)` shape) is passed in rather than constructed
-here -- dependency injection, same as `env_factory` elsewhere in this
-codebase, so this is testable with a fake client and no network/API key.
+single forced tool call chosen from several. The `client` is passed in
+rather than constructed here -- dependency injection, same as `env_factory`
+elsewhere in this codebase, so this is testable with a fake client and no
+network/API key. Two client shapes are accepted, told apart by duck typing:
+- an anthropic.Anthropic instance (anything with `.messages.create`):
+  Claude, with `tool_choice={"type": "any"}`;
+- an openai.OpenAI instance (anything with `.chat.completions.create`): any
+  OpenAI-compatible server -- e.g. gpt-oss-120b served by vLLM on Kamiwaza,
+  reached through the Kamiwaza console app's `/v1` proxy -- with
+  `tool_choice="required"`, the OpenAI-format equivalent.
 
-Five intents, one tool each, routed by which tool Claude calls:
+Five intents, one tool each, routed by which tool the model calls:
 - choose_action: execute one currently-legal action right now (the original
   v1 behavior).
 - dispatch_units: pull specific marines out of autonomous control and send
@@ -24,6 +29,7 @@ already anticipated.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 import numpy as np
@@ -34,6 +40,16 @@ from ..env.sector_grid import SpawnOrientation
 from .state_summary import describe_state_for_llm
 
 DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+DEFAULT_OPENAI_MODEL = "gpt-oss-120b"
+
+# gpt-oss is a reasoning model and its reasoning tokens count against
+# max_tokens, so the OpenAI path needs more headroom than Claude's 300.
+# "low" effort keeps a command round trip well under a second (measured
+# ~0.4s on the Kamiwaza vLLM deployment); servers/models that don't know
+# the parameter ignore it.
+_ANTHROPIC_MAX_TOKENS = 300
+_OPENAI_MAX_TOKENS = 1000
+_OPENAI_REASONING_EFFORT = "low"
 
 
 @dataclass(frozen=True)
@@ -257,6 +273,46 @@ def _tool_schemas(legal_names: list[str], bannable_names: list[str], num_sectors
     ]
 
 
+def _call_tool(client, model: str, user_content: str, tools: list[dict]) -> tuple[str | None, dict]:
+    """One forced tool call. Returns (tool name, tool input), or (None,
+    {"message": <the model's prose>}) if it replied without calling one.
+    Raises on transport/API errors -- the caller turns those into a
+    DeclineResult."""
+    if hasattr(client, "chat"):  # OpenAI-compatible
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=_OPENAI_MAX_TOKENS,
+            reasoning_effort=_OPENAI_REASONING_EFFORT,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            tools=[
+                {"type": "function", "function": {
+                    "name": t["name"], "description": t["description"], "parameters": t["input_schema"],
+                }}
+                for t in tools
+            ],
+            tool_choice="required",
+        )
+        message = response.choices[0].message
+        if not message.tool_calls:
+            return None, {"message": (message.content or "").strip()}
+        call = message.tool_calls[0].function
+        return call.name, json.loads(call.arguments or "{}")
+
+    response = client.messages.create(
+        model=model,
+        max_tokens=_ANTHROPIC_MAX_TOKENS,
+        system=_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_content}],
+        tools=tools,
+        tool_choice={"type": "any"},
+    )
+    tool_use = next(block for block in response.content if block.type == "tool_use")
+    return tool_use.name, tool_use.input
+
+
 def interpret_command(
     client,
     text: str,
@@ -276,26 +332,20 @@ def interpret_command(
         state, spec.grid, orientation, mobilized, garrison_size, player_controlled_count, banned_actions,
     )
 
+    user_content = f"Current game state:\n{state_description}\n\nPlayer command: {text!r}"
+    tools = _tool_schemas(legal_names, bannable_names, spec.grid.num_sectors)
     try:
-        response = client.messages.create(
-            model=model,
-            max_tokens=300,
-            system=_SYSTEM_PROMPT,
-            messages=[{
-                "role": "user",
-                "content": f"Current game state:\n{state_description}\n\nPlayer command: {text!r}",
-            }],
-            tools=_tool_schemas(legal_names, bannable_names, spec.grid.num_sectors),
-            tool_choice={"type": "any"},
-        )
+        tool_name, inp = _call_tool(client, model, user_content, tools)
     except Exception as exc:  # network/API failure -- never crash the game loop over this
         return DeclineResult(message=f"Sorry, I couldn't reach the AI service: {exc}")
-
-    tool_use = next(block for block in response.content if block.type == "tool_use")
-    inp = tool_use.input
+    if tool_name is None:
+        # The model answered in prose instead of calling a tool -- possible
+        # on the OpenAI path, where "required" is enforced by the server
+        # (vLLM does) rather than guaranteed by the protocol.
+        return DeclineResult(message=inp.get("message") or "I didn't understand that.")
     message = inp.get("message", "")
 
-    if tool_use.name == "choose_action":
+    if tool_name == "choose_action":
         chosen = inp.get("action")
         if chosen not in legal_names:
             # The model named something outside this turn's actual enum --
@@ -305,7 +355,7 @@ def interpret_command(
             return DeclineResult(message=f"Can't do that yet -- {_explain_unavailable(chosen, state)}.")
         return ActionResult(action_index=spec.index_for_name(chosen), action_name=chosen, message=message)
 
-    if tool_use.name == "dispatch_units":
+    if tool_name == "dispatch_units":
         raw_count = str(inp.get("unit_count", "")).strip().lower()
         if raw_count == "all":
             unit_count = None
@@ -318,7 +368,7 @@ def interpret_command(
             return DeclineResult(message="That sector doesn't exist.")
         return DispatchResult(unit_count=unit_count, target_sector=int(target_sector), message=message)
 
-    if tool_use.name == "release_units":
+    if tool_name == "release_units":
         scope = inp.get("scope")
         if scope == "sector":
             target_sector = inp.get("target_sector")
@@ -329,7 +379,7 @@ def interpret_command(
             return ReleaseResult(sector=None, most_recent=True, message=message)
         return ReleaseResult(sector=None, most_recent=False, message=message)  # "all" or unrecognized -> all
 
-    if tool_use.name == "set_directive":
+    if tool_name == "set_directive":
         action_name = inp.get("action_name")
         if action_name not in bannable_names:
             return DeclineResult(message=f'"{action_name}" isn\'t a recognized action.')

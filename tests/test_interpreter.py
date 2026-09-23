@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import numpy as np
@@ -296,3 +297,95 @@ def test_interpret_command_returns_decline_on_api_error_instead_of_raising():
 
     assert isinstance(result, DeclineResult)
     assert "network down" in result.message
+
+
+# --- OpenAI-compatible clients (e.g. gpt-oss-120b on Kamiwaza) -------------------
+
+def fake_openai_client(tool_name: str | None, content: str | None = None, **tool_input):
+    """Mimics openai.OpenAI's client.chat.completions.create(**kwargs) shape.
+    `tool_name=None` returns a prose-only reply with no tool call."""
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        tool_calls = None
+        if tool_name is not None:
+            function = SimpleNamespace(name=tool_name, arguments=json.dumps(tool_input))
+            tool_calls = [SimpleNamespace(type="function", function=function)]
+        message = SimpleNamespace(tool_calls=tool_calls, content=content)
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    client.calls = calls
+    return client
+
+
+def test_openai_client_gets_function_tools_with_tool_choice_required():
+    spec = make_spec()
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    mask = np.zeros(spec.num_actions, dtype=bool)
+    mask[0] = True
+    client = fake_openai_client("decline", message="n/a")
+
+    interpret_command(client, "anything", state, spec, mask, identity_orientation(spec), model="gpt-oss-120b")
+
+    call = client.calls[0]
+    assert call["model"] == "gpt-oss-120b"
+    assert call["tool_choice"] == "required"
+    assert call["messages"][0]["role"] == "system"
+    assert "Player command: 'anything'" in call["messages"][1]["content"]
+    offered = {t["function"]["name"]: t for t in call["tools"]}
+    assert set(offered) == {"choose_action", "dispatch_units", "release_units", "set_directive", "decline"}
+    assert all(t["type"] == "function" for t in call["tools"])
+    assert offered["choose_action"]["function"]["parameters"]["properties"]["action"]["enum"] == ["no_op"]
+
+
+def test_openai_client_tool_call_arguments_are_parsed_like_claude_input():
+    spec = make_spec()
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    mask = np.ones(spec.num_actions, dtype=bool)
+    client = fake_openai_client("dispatch_units", unit_count="3", target_sector=5, message="Sending three.")
+
+    result = interpret_command(client, "take a few marines to 5", state, spec, mask, identity_orientation(spec))
+
+    assert result == DispatchResult(unit_count=3, target_sector=5, message="Sending three.")
+
+
+def test_openai_client_enum_violation_still_declines_with_a_ground_truth_reason():
+    spec = make_spec()
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    mask = np.zeros(spec.num_actions, dtype=bool)
+    mask[0] = True
+    client = fake_openai_client("choose_action", action="train_marine", message="Training a marine.")
+
+    result = interpret_command(client, "make a marine", state, spec, mask, identity_orientation(spec))
+
+    assert isinstance(result, DeclineResult)
+    assert "barracks" in result.message
+
+
+def test_openai_client_prose_reply_without_a_tool_call_declines():
+    spec = make_spec()
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    mask = np.ones(spec.num_actions, dtype=bool)
+    client = fake_openai_client(None, content="I'm not sure what you mean.")
+
+    result = interpret_command(client, "blorp", state, spec, mask, identity_orientation(spec))
+
+    assert result == DeclineResult(message="I'm not sure what you mean.")
+
+
+def test_openai_client_api_error_declines_instead_of_raising():
+    spec = make_spec()
+    state = GameState(game_loop=0, minerals=0, food_used=0, food_cap=15)
+    mask = np.ones(spec.num_actions, dtype=bool)
+
+    def raise_error(**kwargs):
+        raise RuntimeError("proxy unreachable")
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=raise_error)))
+
+    result = interpret_command(client, "return to base", state, spec, mask, identity_orientation(spec))
+
+    assert isinstance(result, DeclineResult)
+    assert "proxy unreachable" in result.message

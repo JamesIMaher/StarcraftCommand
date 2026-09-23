@@ -21,6 +21,10 @@ pytest
 # Generative-AI command layer (src/sc2rl/command/, inference/interactive_play.py).
 anthropic
 flask
+# --kamiwaza-url mode: the Kamiwaza-hosted console (relay_client.py) and the
+# platform's OpenAI-compatible LLM (interpreter.py's OpenAI path).
+openai
+httpx
 # Loads ANTHROPIC_API_KEY (and anything else) from a local .env file, so the
 # key lives in one project-scoped, gitignored file instead of a machine-wide
 # Windows environment variable. See .env.example and the README.
